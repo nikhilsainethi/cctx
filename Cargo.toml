@@ -4,3 +4,25 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# clap: CLI argument parsing. The "derive" feature lets us define commands
+# with plain Rust structs instead of writing builder boilerplate.
+clap = { version = "4", features = ["derive"] }
+
+# serde + serde_json: serialization/deserialization. The "derive" feature
+# auto-generates JSON parsing code for any struct you annotate with
+# #[derive(Deserialize, Serialize)].
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# tiktoken-rs: OpenAI-compatible BPE tokenizer. Lets us count tokens exactly
+# the same way GPT-4 / Claude do, so our budget numbers are accurate.
+tiktoken-rs = "0.5"
+
+# anyhow: ergonomic error propagation for application code (binaries).
+# The ? operator propagates any error that implements std::error::Error.
+anyhow = "1"
+
+# thiserror: ergonomic custom error types for library code.
+# Annotate an enum with #[derive(Error)] to get Display + Error for free.
+# We'll use this in later modules when we define domain-specific errors.
+thiserror = "1"
