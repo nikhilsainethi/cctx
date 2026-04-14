@@ -121,6 +121,22 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = InputFormatArg::Auto)]
         input_format: InputFormatArg,
     },
+
+    /// Compare two context files side-by-side (before vs after).
+    ///
+    /// Shows token changes, message differences, dead zone improvements,
+    /// and health score delta. Useful for evaluating optimization impact.
+    Diff {
+        /// Original (before) file.
+        before: PathBuf,
+        /// Optimized (after) file.
+        after: PathBuf,
+        #[arg(long, value_enum, default_value_t = InputFormatArg::Auto)]
+        input_format: InputFormatArg,
+        /// Output format: terminal (table) or json.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Terminal)]
+        format: OutputFormat,
+    },
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -168,9 +184,25 @@ fn main() -> Result<()> {
         } => {
             let raw = read_input(&file)?;
             let ctx = build_context(&raw, input_format.to_lib())?;
-            // Just print the token count — nothing else. Pipe-friendly.
-            println!("{}", ctx.total_tokens);
+            if ctx.chunk_count() == 0 {
+                println!("0");
+            } else {
+                println!("{}", ctx.total_tokens);
+            }
             Ok(())
+        }
+        Commands::Diff {
+            before,
+            after,
+            input_format,
+            format,
+        } => {
+            let fmt = input_format.to_lib();
+            let raw_b = read_file(&before)?;
+            let raw_a = read_file(&after)?;
+            let ctx_b = build_context(&raw_b, fmt.clone())?;
+            let ctx_a = build_context(&raw_a, fmt)?;
+            cmd_diff(&ctx_b, &ctx_a, format)
         }
     }
 }
@@ -179,8 +211,7 @@ fn main() -> Result<()> {
 
 fn read_input(file: &Option<PathBuf>) -> Result<String> {
     match file {
-        Some(path) if path.to_str() != Some("-") => std::fs::read_to_string(path)
-            .with_context(|| format!("Cannot read '{}'", path.display())),
+        Some(path) if path.to_str() != Some("-") => read_file(path),
         _ => {
             if io::stdin().is_terminal() {
                 anyhow::bail!(
@@ -202,6 +233,10 @@ fn read_input(file: &Option<PathBuf>) -> Result<String> {
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 fn cmd_analyze(context: &AppContext, model: &str, format: OutputFormat) -> Result<()> {
+    if context.chunk_count() == 0 {
+        eprintln!("No context to analyze");
+        return Ok(());
+    }
     let report = analyze(context, model);
     match format {
         OutputFormat::Terminal => {
@@ -221,6 +256,16 @@ fn cmd_optimize(
     budget: Option<usize>,
     output: &Option<PathBuf>,
 ) -> Result<()> {
+    if context.chunk_count() == 0 {
+        eprintln!("No context to optimize");
+        return Ok(());
+    }
+    if let Some(b) = budget {
+        if b == 0 {
+            anyhow::bail!("Budget must be a positive number");
+        }
+    }
+
     let before_tokens = context.total_tokens;
 
     // ── Resolve strategy list ─────────────────────────────────────────────
@@ -266,6 +311,14 @@ fn cmd_compress(
     query: Option<String>,
     output: &Option<PathBuf>,
 ) -> Result<()> {
+    if context.chunk_count() == 0 {
+        eprintln!("No context to compress");
+        return Ok(());
+    }
+    if budget == 0 {
+        anyhow::bail!("Budget must be a positive number");
+    }
+
     let before_tokens = context.total_tokens;
 
     // Compress always runs structural first, then enforces budget.
@@ -285,6 +338,318 @@ fn cmd_compress(
     print_summary(before_tokens, &final_ctx, &warnings);
 
     Ok(())
+}
+
+// ── Diff command ──────────────────────────────────────────────────────────
+
+fn cmd_diff(before: &AppContext, after: &AppContext, format: OutputFormat) -> Result<()> {
+    let report_b = analyze(before, "default");
+    let report_a = analyze(after, "default");
+
+    // ── Detect per-message changes ────────────────────────────────────────
+    //
+    // The optimized file has no persistent IDs — messages get new positions
+    // when re-parsed. We match by content: exact match = moved (or same),
+    // prefix match = compressed, no match = removed.
+    use std::collections::HashSet;
+
+    // (before_pos, after_pos, role)
+    let mut moved: Vec<(usize, usize, String)> = Vec::new();
+    // (before_pos, before_tokens, after_tokens, role)
+    let mut compressed: Vec<(usize, usize, usize, String)> = Vec::new();
+    // (before_pos, role, tokens)
+    let mut removed: Vec<(usize, String, usize)> = Vec::new();
+
+    let mut after_matched: HashSet<usize> = HashSet::new();
+    let mut before_matched: HashSet<usize> = HashSet::new();
+
+    // Pass 1: exact content matches → same position or moved.
+    for (b_pos, b_chunk) in before.chunks.iter().enumerate() {
+        if let Some((a_pos, _)) = after
+            .chunks
+            .iter()
+            .enumerate()
+            .find(|(a_pos, a)| !after_matched.contains(a_pos) && a.content == b_chunk.content)
+        {
+            after_matched.insert(a_pos);
+            before_matched.insert(b_pos);
+            if a_pos != b_pos {
+                moved.push((b_pos, a_pos, b_chunk.role.clone()));
+            }
+        }
+    }
+
+    // Pass 2: unmatched → try role+prefix match (compressed) or mark removed.
+    for (b_pos, b_chunk) in before.chunks.iter().enumerate() {
+        if before_matched.contains(&b_pos) {
+            continue;
+        }
+        let prefix_len = 80.min(b_chunk.content.len());
+        let b_prefix = &b_chunk.content[..prefix_len];
+
+        let role_match = after.chunks.iter().enumerate().find(|(a_pos, a)| {
+            !after_matched.contains(a_pos)
+                && a.role == b_chunk.role
+                && (a.content.starts_with(b_prefix)
+                    || b_chunk
+                        .content
+                        .starts_with(&a.content[..80.min(a.content.len())]))
+        });
+
+        if let Some((a_pos, a_chunk)) = role_match {
+            after_matched.insert(a_pos);
+            before_matched.insert(b_pos);
+            compressed.push((
+                b_pos,
+                b_chunk.token_count,
+                a_chunk.token_count,
+                b_chunk.role.clone(),
+            ));
+        } else {
+            removed.push((b_pos, b_chunk.role.clone(), b_chunk.token_count));
+        }
+    }
+
+    match format {
+        OutputFormat::Terminal => print_diff_terminal(
+            &report_b, &report_a, &moved, &compressed, &removed, before, after,
+        ),
+        OutputFormat::Json => print_diff_json(
+            &report_b, &report_a, &moved, &compressed, &removed,
+        ),
+    }
+
+    Ok(())
+}
+
+fn print_diff_terminal(
+    before: &cctx::analyzer::health::HealthReport,
+    after: &cctx::analyzer::health::HealthReport,
+    moved: &[(usize, usize, String)],
+    compressed: &[(usize, usize, usize, String)],
+    removed: &[(usize, String, usize)],
+    ctx_b: &AppContext,
+    ctx_a: &AppContext,
+) {
+    use owo_colors::OwoColorize;
+
+    // ── Table rendering ───────────────────────────────────────────────────
+    // Column widths: label=21, before=10, after=10, change=10
+    let w0 = 21usize;
+    let w1 = 10usize;
+    let w2 = 10usize;
+    let w3 = 10usize;
+
+    let sep_h = format!(
+        "├{:─<w0$}┼{:─<w1$}┼{:─<w2$}┼{:─<w3$}┤",
+        "", "", "", ""
+    );
+    let top = format!(
+        "┌{:─<w0$}┬{:─<w1$}┬{:─<w2$}┬{:─<w3$}┐",
+        "", "", "", ""
+    );
+    let bot = format!(
+        "└{:─<w0$}┴{:─<w1$}┴{:─<w2$}┴{:─<w3$}┘",
+        "", "", "", ""
+    );
+
+    let row = |label: &str, b: &str, a: &str, ch: &str| {
+        format!(
+            "│ {:<w$}│ {:>w1$} │ {:>w2$} │ {:>w3$} │",
+            label,
+            b,
+            a,
+            ch,
+            w = w0 - 1,
+            w1 = w1 - 2,
+            w2 = w2 - 2,
+            w3 = w3 - 2,
+        )
+    };
+
+    // ── Compute change strings ────────────────────────────────────────────
+    let fmt_num = |n: usize| -> String {
+        let s = n.to_string();
+        let chars: Vec<char> = s.chars().collect();
+        let mut r = String::with_capacity(s.len() + s.len() / 3);
+        for (i, &ch) in chars.iter().enumerate() {
+            if i > 0 && (chars.len() - i) % 3 == 0 {
+                r.push(',');
+            }
+            r.push(ch);
+        }
+        r
+    };
+
+    let pct_change = |b: usize, a: usize| -> String {
+        if b == 0 {
+            return "—".to_string();
+        }
+        if a == b {
+            return "—".to_string();
+        }
+        let pct = ((a as f64 - b as f64) / b as f64) * 100.0;
+        if pct < 0.0 {
+            format!("{:.1}%", pct)
+        } else {
+            format!("+{:.1}%", pct)
+        }
+    };
+
+    let score_change = |b: u32, a: u32| -> String {
+        if a == b {
+            "—".to_string()
+        } else if a > b {
+            format!("+{}", a - b)
+        } else {
+            format!("-{}", b - a)
+        }
+    };
+
+    // ── Print table ───────────────────────────────────────────────────────
+    println!("{}", top);
+    println!("{}", row("Metric", "Before", "After", "Change"));
+    println!("{}", sep_h);
+    println!(
+        "{}",
+        row(
+            "Total tokens",
+            &fmt_num(before.total_tokens),
+            &fmt_num(after.total_tokens),
+            &pct_change(before.total_tokens, after.total_tokens),
+        )
+    );
+    println!(
+        "{}",
+        row(
+            "Messages",
+            &fmt_num(before.chunk_count),
+            &fmt_num(after.chunk_count),
+            &pct_change(before.chunk_count, after.chunk_count),
+        )
+    );
+    println!(
+        "{}",
+        row(
+            "Dead zone tokens",
+            &fmt_num(before.dead_zone.tokens),
+            &fmt_num(after.dead_zone.tokens),
+            &pct_change(before.dead_zone.tokens, after.dead_zone.tokens),
+        )
+    );
+    println!(
+        "{}",
+        row(
+            "Duplicate tokens",
+            &fmt_num(before.duplication.duplicate_tokens),
+            &fmt_num(after.duplication.duplicate_tokens),
+            &pct_change(
+                before.duplication.duplicate_tokens,
+                after.duplication.duplicate_tokens
+            ),
+        )
+    );
+    println!(
+        "{}",
+        row(
+            "Health score",
+            &before.health_score.to_string(),
+            &after.health_score.to_string(),
+            &score_change(before.health_score, after.health_score),
+        )
+    );
+    println!("{}", bot);
+
+    // ── Change details ────────────────────────────────────────────────────
+    if !moved.is_empty() {
+        println!();
+        println!(
+            "{}",
+            format!("Moved: {} messages reordered", moved.len()).yellow()
+        );
+        for (b_pos, a_pos, role) in moved.iter().take(5) {
+            println!(
+                "  message {} ({}) :: position {}/{} -> {}/{}",
+                b_pos, role, b_pos, ctx_b.chunk_count(), a_pos, ctx_a.chunk_count()
+            );
+        }
+        if moved.len() > 5 {
+            println!("  ... and {} more", moved.len() - 5);
+        }
+    }
+
+    if !compressed.is_empty() {
+        println!();
+        println!(
+            "{}",
+            format!("Compressed: {} messages reduced", compressed.len()).cyan()
+        );
+        for &(b_pos, bt, at, ref role) in compressed.iter().take(5) {
+            let saved = bt.saturating_sub(at);
+            println!(
+                "  message {} ({}) :: {} -> {} tokens (-{})",
+                b_pos, role, bt, at, saved
+            );
+        }
+        if compressed.len() > 5 {
+            println!("  ... and {} more", compressed.len() - 5);
+        }
+    }
+
+    if !removed.is_empty() {
+        println!();
+        println!(
+            "{}",
+            format!("Removed: {} messages dropped", removed.len()).red()
+        );
+        for (b_pos, role, tokens) in removed.iter().take(5) {
+            println!("  message {} ({}, {} tokens)", b_pos, role, tokens);
+        }
+        if removed.len() > 5 {
+            println!("  ... and {} more", removed.len() - 5);
+        }
+    }
+}
+
+fn print_diff_json(
+    before: &cctx::analyzer::health::HealthReport,
+    after: &cctx::analyzer::health::HealthReport,
+    moved: &[(usize, usize, String)],
+    compressed: &[(usize, usize, usize, String)],
+    removed: &[(usize, String, usize)],
+) {
+    let diff = serde_json::json!({
+        "before": {
+            "total_tokens": before.total_tokens,
+            "messages": before.chunk_count,
+            "dead_zone_tokens": before.dead_zone.tokens,
+            "duplicate_tokens": before.duplication.duplicate_tokens,
+            "health_score": before.health_score,
+        },
+        "after": {
+            "total_tokens": after.total_tokens,
+            "messages": after.chunk_count,
+            "dead_zone_tokens": after.dead_zone.tokens,
+            "duplicate_tokens": after.duplication.duplicate_tokens,
+            "health_score": after.health_score,
+        },
+        "changes": {
+            "token_change_pct": if before.total_tokens > 0 {
+                ((after.total_tokens as f64 - before.total_tokens as f64) / before.total_tokens as f64) * 100.0
+            } else { 0.0 },
+            "health_score_delta": after.health_score as i64 - before.health_score as i64,
+            "moved_messages": moved.iter().map(|(b, a, role)| {
+                serde_json::json!({"from": b, "to": a, "role": role})
+            }).collect::<Vec<_>>(),
+            "compressed_messages": compressed.iter().map(|&(pos, bt, at, ref role)| {
+                serde_json::json!({"position": pos, "before_tokens": bt, "after_tokens": at, "role": role})
+            }).collect::<Vec<_>>(),
+            "removed_messages": removed.iter().map(|(pos, role, tokens)| {
+                serde_json::json!({"position": pos, "role": role, "tokens": tokens})
+            }).collect::<Vec<_>>(),
+        }
+    });
+    println!("{}", serde_json::to_string_pretty(&diff).unwrap());
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -334,11 +699,32 @@ fn emit_json(context: &AppContext, output: &Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Read a file with clean error messages (shared by read_input and diff).
+fn read_file(path: &PathBuf) -> Result<String> {
+    let bytes = std::fs::read(path).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            anyhow::anyhow!("File not found: {}", path.display())
+        } else if e.kind() == io::ErrorKind::PermissionDenied {
+            anyhow::anyhow!("Permission denied: {}", path.display())
+        } else {
+            anyhow::anyhow!("Cannot read '{}': {}", path.display(), e)
+        }
+    })?;
+    String::from_utf8(bytes).map_err(|_| {
+        anyhow::anyhow!(
+            "File contains non-UTF-8 data (binary file?): {}",
+            path.display()
+        )
+    })
+}
+
 fn build_context(raw: &str, input_format: Option<InputFormat>) -> Result<AppContext> {
     let messages = formats::parse_input(raw, input_format).context("Failed to parse input")?;
 
+    // Empty input (e.g. []) → return a valid but empty Context.
+    // Each command checks for this and prints a friendly message.
     if messages.is_empty() {
-        anyhow::bail!("Input is empty — no messages or chunks found");
+        return Ok(AppContext::new(vec![]));
     }
 
     let tokenizer = Tokenizer::new().context("Failed to initialize BPE tokenizer")?;

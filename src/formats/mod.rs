@@ -46,7 +46,9 @@ pub fn detect_format(raw: &str) -> InputFormat {
     };
 
     if arr.is_empty() {
-        return InputFormat::Raw;
+        // Valid JSON array with zero elements → treat as empty OpenAI format.
+        // This ensures [] produces 0 messages (not a raw chunk containing "[]").
+        return InputFormat::OpenAi;
     }
 
     let first = &arr[0];
