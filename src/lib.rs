@@ -3,4 +3,5 @@
 pub mod core;
 pub mod analyzer;
 pub mod formats;
+pub mod pipeline;
 pub mod strategies;

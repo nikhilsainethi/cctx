@@ -167,8 +167,8 @@ fn bookend_summary_on_stderr() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("Reordered 10 chunks"))
-        .stderr(predicate::str::contains("Health score:"));
+        .stderr(predicate::str::contains("Pipeline: bookend"))
+        .stderr(predicate::str::contains("Tokens:"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -275,8 +275,8 @@ fn optimize_stdout_is_pure_json_stderr_has_summary() {
     // stderr must have the human-readable summary.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Reordered"),
-        "stderr should contain summary, got: {}",
+        stderr.contains("Pipeline:"),
+        "stderr should contain pipeline summary, got: {}",
         stderr
     );
 }
@@ -362,4 +362,215 @@ fn output_flag_writes_file_and_stderr_confirms() {
     // Cleanup.
     let _ = std::fs::remove_file(&outfile);
     let _ = std::fs::remove_dir(&dir);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Pipeline chaining
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn pipeline_chained_strategies() {
+    // --strategy bookend --strategy structural runs both in order.
+    let output = cctx()
+        .args([
+            "optimize",
+            "tests/fixtures/technical_conversation.json",
+            "--strategy", "bookend",
+            "--strategy", "structural",
+        ])
+        .output()
+        .expect("failed to run");
+
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Pipeline log should list both strategies.
+    assert!(stderr.contains("bookend"), "missing bookend in pipeline log");
+    assert!(stderr.contains("structural"), "missing structural in pipeline log");
+    // Structural should reduce tokens (JSON/code compression).
+    assert!(stderr.contains("reduction"), "expected token reduction from structural");
+
+    // stdout is valid JSON.
+    let _: Vec<Value> = serde_json::from_slice(&output.stdout)
+        .expect("stdout must be valid JSON");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Presets
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn preset_safe_runs_bookend_only() {
+    cctx()
+        .args([
+            "optimize",
+            "tests/fixtures/sample_conversation.json",
+            "--preset", "safe",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Pipeline: bookend"))
+        .stderr(predicate::str::contains("Tokens:"));
+}
+
+#[test]
+fn preset_balanced_runs_bookend_and_structural() {
+    cctx()
+        .args([
+            "optimize",
+            "tests/fixtures/technical_conversation.json",
+            "--preset", "balanced",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Pipeline: bookend, structural"));
+}
+
+#[test]
+fn preset_aggressive_runs_three_strategies() {
+    cctx()
+        .args([
+            "optimize",
+            "tests/fixtures/technical_conversation.json",
+            "--preset", "aggressive",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Pipeline: bookend, structural, dedup"));
+}
+
+#[test]
+fn unknown_preset_fails() {
+    cctx()
+        .args([
+            "optimize",
+            "tests/fixtures/sample_conversation.json",
+            "--preset", "turbo",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown preset"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Token budget
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn budget_drops_chunks_to_fit() {
+    // technical_conversation.json is ~4868 tokens. Budget of 2000 forces drops.
+    let output = cctx()
+        .args([
+            "optimize",
+            "tests/fixtures/technical_conversation.json",
+            "--preset", "balanced",
+            "--budget", "2000",
+        ])
+        .output()
+        .expect("failed to run");
+
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Dropped chunk"), "should warn about dropped chunks");
+
+    // Output should have fewer chunks than the original 5.
+    let messages: Vec<Value> = serde_json::from_slice(&output.stdout)
+        .expect("stdout must be valid JSON");
+    assert!(messages.len() < 5, "budget should have dropped some chunks");
+}
+
+#[test]
+fn budget_within_limit_drops_nothing() {
+    // sample_conversation is ~1945 tokens. Budget of 100000 → no drops.
+    let output = cctx()
+        .args([
+            "optimize",
+            "tests/fixtures/sample_conversation.json",
+            "--strategy", "bookend",
+            "--budget", "100000",
+        ])
+        .output()
+        .expect("failed to run");
+
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("Dropped"), "no chunks should be dropped");
+
+    let messages: Vec<Value> = serde_json::from_slice(&output.stdout)
+        .expect("stdout must be valid JSON");
+    assert_eq!(messages.len(), 20);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Compress command
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn compress_hits_budget() {
+    let output = cctx()
+        .args([
+            "compress",
+            "tests/fixtures/technical_conversation.json",
+            "--budget", "2000",
+        ])
+        .output()
+        .expect("failed to run");
+
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("structural"), "compress should run structural");
+
+    let messages: Vec<Value> = serde_json::from_slice(&output.stdout)
+        .expect("stdout must be valid JSON");
+    assert!(!messages.is_empty());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Count command
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn count_prints_token_number() {
+    let output = cctx()
+        .args(["count", "tests/fixtures/sample_conversation.json"])
+        .output()
+        .expect("failed to run");
+
+    assert!(output.status.success());
+
+    // stdout should be just a number (with trailing newline).
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let count: usize = stdout.trim().parse().expect("count output should be a number");
+    assert!(count > 1000, "sample conversation should be >1000 tokens, got {}", count);
+}
+
+#[test]
+fn count_works_in_pipe() {
+    // optimize | count — verify the piped chain produces a number.
+    let optimize_output = cctx()
+        .args([
+            "optimize",
+            "tests/fixtures/technical_conversation.json",
+            "--preset", "balanced",
+        ])
+        .output()
+        .expect("failed to run optimize");
+
+    assert!(optimize_output.status.success());
+
+    let count_output = cctx()
+        .args(["count"])
+        .write_stdin(optimize_output.stdout)
+        .output()
+        .expect("failed to run count");
+
+    assert!(count_output.status.success());
+
+    let stdout = String::from_utf8_lossy(&count_output.stdout);
+    let count: usize = stdout.trim().parse().expect("count output should be a number");
+    // After balanced optimization, should be less than the original ~4868.
+    assert!(count > 0 && count < 4868, "piped count should be between 0 and 4868, got {}", count);
 }
