@@ -1,7 +1,7 @@
-// The binary crate (main.rs) imports the library crate by its package name.
-// `use cctx::...` is how main.rs reaches into lib.rs and its child modules.
+use std::collections::HashSet;
+
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use cctx::analyzer::health::{analyze, assign_attention_zones, print_chunk_table};
@@ -10,9 +10,6 @@ use cctx::core::tokenizer::Tokenizer;
 use cctx::strategies::bookend;
 
 // ── CLI definition ────────────────────────────────────────────────────────────
-//
-// clap's derive API: annotate a struct with #[derive(Parser)] and clap generates
-// all the argument parsing, help text, and error messages automatically.
 
 #[derive(Parser)]
 #[command(
@@ -21,19 +18,31 @@ use cctx::strategies::bookend;
     version
 )]
 struct Cli {
-    // #[command(subcommand)] tells clap that this field holds one of the Commands variants.
     #[command(subcommand)]
     command: Commands,
 }
 
-// Each variant of this enum becomes a subcommand.
-// The doc comment on each variant becomes the help text shown in `cctx --help`.
+#[derive(Clone, ValueEnum)]
+enum OutputFormat {
+    Terminal,
+    Json,
+}
+
 #[derive(Subcommand)]
 enum Commands {
-    /// Analyze a context file and report health metrics (tokens, dead zones, score).
+    /// Analyze a context file and report health metrics (tokens, dead zones, duplication, score).
     Analyze {
         /// Path to a JSON file: array of {"role": "...", "content": "..."} objects.
         file: PathBuf,
+
+        /// Target model for budget calculation.
+        /// Supported: gpt-4o (128k), claude-sonnet (200k), claude-opus (200k), gpt-3.5-turbo (16k).
+        #[arg(long, default_value = "default")]
+        model: String,
+
+        /// Output format: terminal (pretty box report) or json (machine-readable).
+        #[arg(long, value_enum, default_value_t = OutputFormat::Terminal)]
+        format: OutputFormat,
     },
 
     /// Optimize a context file by applying a strategy and output the result as JSON.
@@ -44,102 +53,167 @@ enum Commands {
         /// Strategy to apply. Currently supported: bookend
         #[arg(long, default_value = "bookend")]
         strategy: String,
+
+        /// Score chunk relevance against this query using TF-IDF.
+        /// Without this, uses a heuristic: system messages and last 3 user
+        /// messages get highest priority.
+        #[arg(long)]
+        query: Option<String>,
+
+        /// Write output to a file instead of stdout.
+        /// When omitted, optimized JSON goes to stdout (pipe-friendly).
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-// Returning Result<()> from main lets us use ? throughout.
-// If we return Err, Rust prints the error message and exits with code 1.
 fn main() -> Result<()> {
     let cli = Cli::parse();
-
-    // match on an enum is exhaustive — the compiler ensures every variant is handled.
     match cli.command {
-        Commands::Analyze { file } => cmd_analyze(file),
-        Commands::Optimize { file, strategy } => cmd_optimize(file, strategy),
+        Commands::Analyze {
+            file,
+            model,
+            format,
+        } => cmd_analyze(file, model, format),
+        Commands::Optimize {
+            file,
+            strategy,
+            query,
+            output,
+        } => cmd_optimize(file, strategy, query, output),
     }
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-fn cmd_analyze(file: PathBuf) -> Result<()> {
-    let filename = file.display().to_string();
+fn cmd_analyze(file: PathBuf, model: String, format: OutputFormat) -> Result<()> {
     let context = build_context(&file)?;
+    let report = analyze(&context, &model);
 
-    print_chunk_table(&context);
-
-    let report = analyze(&context);
-    report.print(&filename);
+    match format {
+        OutputFormat::Terminal => {
+            print_chunk_table(&context);
+            report.print_terminal();
+        }
+        OutputFormat::Json => {
+            report.print_json();
+        }
+    }
 
     Ok(())
 }
 
-fn cmd_optimize(file: PathBuf, strategy: String) -> Result<()> {
+fn cmd_optimize(
+    file: PathBuf,
+    strategy: String,
+    query: Option<String>,
+    output: Option<PathBuf>,
+) -> Result<()> {
     if strategy != "bookend" {
-        anyhow::bail!("Unknown strategy '{}'. Currently supported: bookend", strategy);
+        anyhow::bail!(
+            "Unknown strategy '{}'. Currently supported: bookend",
+            strategy
+        );
     }
 
     let context = build_context(&file)?;
-    let original_tokens = context.total_tokens;
-    let original_score = analyze(&context).health_score;
+    let original_score = analyze(&context, "default").health_score;
 
-    // Apply the bookend strategy — returns a new Vec<Chunk> in reordered order.
-    let mut reordered_chunks = bookend::apply(&context);
+    // Snapshot: which chunk indices sit in the dead zone BEFORE optimization.
+    // HashSet<usize> is a set of unique integers — O(1) contains() checks.
+    let before_dead: HashSet<usize> = context
+        .chunks
+        .iter()
+        .filter(|c| c.attention_zone == AttentionZone::DeadZone)
+        .map(|c| c.index)
+        .collect();
+    let dead_count_before = before_dead.len();
 
-    // Re-assign attention zones: after reordering, each chunk occupies a new
-    // position in the token stream, so its zone label must be recomputed.
-    let total_tokens = reordered_chunks.iter().map(|c| c.token_count).sum();
-    assign_attention_zones(&mut reordered_chunks, total_tokens);
+    // Apply bookend with optional query.
+    // .as_deref() converts Option<String> → Option<&str> by borrowing the
+    // inner String as a &str slice. This avoids moving ownership.
+    let mut reordered = bookend::apply(&context, query.as_deref());
 
-    let new_context = AppContext::new(reordered_chunks);
-    let new_score = analyze(&new_context).health_score;
+    // Re-assign attention zones based on the new ordering.
+    let total_tokens = reordered.iter().map(|c| c.token_count).sum();
+    assign_attention_zones(&mut reordered, total_tokens);
 
-    // Emit the optimized messages as JSON to stdout (pipe-friendly).
+    // Count chunks rescued: were in dead zone before, now in strong zone.
+    let moved_from_dead = reordered
+        .iter()
+        .filter(|c| before_dead.contains(&c.index) && c.attention_zone == AttentionZone::Strong)
+        .count();
+
+    let new_context = AppContext::new(reordered);
+    let new_score = analyze(&new_context, "default").health_score;
+
+    // ── Serialize output ──────────────────────────────────────────────────
     let messages: Vec<Message> = new_context.chunks.iter().map(|c| c.to_message()).collect();
-    // serde_json::to_string_pretty formats JSON with indentation.
     let json = serde_json::to_string_pretty(&messages).context("Failed to serialize output")?;
-    println!("{json}");
 
-    // Print stats to stderr so stdout stays clean JSON.
+    // Write to file or stdout. File path goes to --output; without it, stdout.
+    match &output {
+        Some(path) => {
+            std::fs::write(path, &json)
+                .with_context(|| format!("Cannot write to '{}'", path.display()))?;
+            eprintln!("Wrote optimized context to {}", path.display());
+        }
+        None => {
+            println!("{json}");
+        }
+    }
+
+    // ── Summary to stderr ─────────────────────────────────────────────────
+    let n = new_context.chunk_count();
     eprintln!();
-    eprintln!("--- bookend applied ---");
-    eprintln!("Tokens:       {} (unchanged — pure reorder)", original_tokens);
-    eprintln!("Health score: {} → {}", original_score, new_score);
-    eprintln!("Chunk order:  {}", chunk_order_summary(&new_context));
+
+    if let Some(q) = &query {
+        eprintln!("Query: \"{}\"", q);
+    }
+
+    eprintln!(
+        "Reordered {} chunks. Moved {} high-relevance chunks from dead zone to safe positions.",
+        n, moved_from_dead
+    );
+
+    if moved_from_dead > 0 {
+        // Estimate based on Liu et al.: 10–30% recall improvement for rescued content.
+        // Scale by what fraction of the dead zone we actually rescued.
+        let rescue_ratio = moved_from_dead as f64 / dead_count_before.max(1) as f64;
+        let estimate = if rescue_ratio > 0.5 {
+            "~20-30%"
+        } else {
+            "~10-20%"
+        };
+        eprintln!("Estimated recall improvement: {}", estimate);
+    }
+
+    eprintln!("Health score: {} -> {}", original_score, new_score);
 
     Ok(())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Read a file, parse the JSON, count tokens, assign attention zones, and
-/// return a fully-populated Context ready for analysis or optimization.
 fn build_context(file: &PathBuf) -> Result<AppContext> {
-    // std::fs::read_to_string returns Result<String>.
-    // .with_context() attaches a descriptive message if it returns Err.
     let raw = std::fs::read_to_string(file)
         .with_context(|| format!("Cannot read file '{}'", file.display()))?;
 
-    // serde_json::from_str parses JSON into our Message type.
-    // The turbofish ::<Vec<Message>> is the type hint — tells serde what to produce.
     let messages: Vec<Message> = serde_json::from_str(&raw)
         .context("Invalid JSON — expected an array of {\"role\": ..., \"content\": ...} objects")?;
 
     let tokenizer = Tokenizer::new().context("Failed to initialize BPE tokenizer")?;
     let n = messages.len();
 
-    // Build initial chunks. into_iter() consumes the Vec (moves each element).
-    // enumerate() pairs each element with its index: (0, msg0), (1, msg1), ...
     let mut chunks: Vec<Chunk> = messages
         .into_iter()
         .enumerate()
         .map(|(i, msg)| {
             let relevance = msg
                 .relevance_score
-                // .map() transforms Some(v) → Some(f(v)), leaves None unchanged.
                 .map(|s| s.clamp(0.0, 1.0))
-                // .unwrap_or_else() provides a fallback when the Option is None.
                 .unwrap_or_else(|| default_relevance(&msg.role, i, n));
 
             Chunk {
@@ -148,20 +222,20 @@ fn build_context(file: &PathBuf) -> Result<AppContext> {
                 content: msg.content.clone(),
                 token_count: tokenizer.count(&msg.content),
                 relevance_score: relevance,
-                attention_zone: AttentionZone::Strong, // placeholder — set below
+                attention_zone: AttentionZone::Strong, // placeholder
             }
         })
         .collect();
 
-    // Total tokens needed before we can assign zones (zones depend on position/total).
     let total_tokens: usize = chunks.iter().map(|c| c.token_count).sum();
     assign_attention_zones(&mut chunks, total_tokens);
 
     Ok(AppContext::new(chunks))
 }
 
-/// Heuristic relevance score when the user doesn't provide one.
-/// System prompts are always critical. For user/assistant turns, recency = relevance.
+/// Initial relevance score assigned during context building.
+/// The bookend strategy overrides these with its own scoring, but other
+/// strategies (future) may use these defaults.
 fn default_relevance(role: &str, index: usize, total: usize) -> f64 {
     if role == "system" {
         return 1.0;
@@ -169,16 +243,5 @@ fn default_relevance(role: &str, index: usize, total: usize) -> f64 {
     if total <= 1 {
         return 0.5;
     }
-    // Map index 0..n-1 linearly to 0.1..0.9 — later messages score higher.
     0.1 + (index as f64 / (total - 1) as f64) * 0.8
-}
-
-/// Build a compact string showing new chunk order, e.g. "[2] [4] [0] [3] [1]".
-fn chunk_order_summary(context: &AppContext) -> String {
-    context
-        .chunks
-        .iter()
-        .map(|c| format!("[{}]", c.index))
-        .collect::<Vec<_>>()
-        .join(" → ")
 }

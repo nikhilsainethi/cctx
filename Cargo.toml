@@ -26,3 +26,7 @@ anyhow = "1"
 # Annotate an enum with #[derive(Error)] to get Display + Error for free.
 # We'll use this in later modules when we define domain-specific errors.
 thiserror = "1"
+
+# owo-colors: zero-dependency terminal color library.
+# Call .green(), .red(), .bold() on any type that implements Display.
+owo-colors = "4"
