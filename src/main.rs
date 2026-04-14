@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use cctx::analyzer::health::{analyze, assign_attention_zones, print_chunk_table};
 use cctx::core::context::{AttentionZone, Chunk, Context as AppContext, Message};
 use cctx::core::tokenizer::Tokenizer;
-use cctx::strategies::bookend;
+use cctx::strategies::{bookend, structural};
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
@@ -50,7 +50,7 @@ enum Commands {
         /// Path to a JSON file (same format as `analyze`).
         file: PathBuf,
 
-        /// Strategy to apply. Currently supported: bookend
+        /// Strategy to apply. Supported: bookend, structural
         #[arg(long, default_value = "bookend")]
         strategy: String,
 
@@ -111,18 +111,29 @@ fn cmd_optimize(
     query: Option<String>,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    if strategy != "bookend" {
-        anyhow::bail!(
-            "Unknown strategy '{}'. Currently supported: bookend",
-            strategy
-        );
+    let context = build_context(&file)?;
+
+    match strategy.as_str() {
+        "bookend" => run_bookend(&context, query.as_deref(), &output)?,
+        "structural" => run_structural(&context, query.as_deref(), &output)?,
+        other => anyhow::bail!(
+            "Unknown strategy '{}'. Supported: bookend, structural",
+            other
+        ),
     }
 
-    let context = build_context(&file)?;
-    let original_score = analyze(&context, "default").health_score;
+    Ok(())
+}
 
-    // Snapshot: which chunk indices sit in the dead zone BEFORE optimization.
-    // HashSet<usize> is a set of unique integers — O(1) contains() checks.
+// ── Strategy runners ──────────────────────────────────────────────────────────
+
+fn run_bookend(
+    context: &AppContext,
+    query: Option<&str>,
+    output: &Option<PathBuf>,
+) -> Result<()> {
+    let original_score = analyze(context, "default").health_score;
+
     let before_dead: HashSet<usize> = context
         .chunks
         .iter()
@@ -131,16 +142,10 @@ fn cmd_optimize(
         .collect();
     let dead_count_before = before_dead.len();
 
-    // Apply bookend with optional query.
-    // .as_deref() converts Option<String> → Option<&str> by borrowing the
-    // inner String as a &str slice. This avoids moving ownership.
-    let mut reordered = bookend::apply(&context, query.as_deref());
-
-    // Re-assign attention zones based on the new ordering.
+    let mut reordered = bookend::apply(context, query);
     let total_tokens = reordered.iter().map(|c| c.token_count).sum();
     assign_attention_zones(&mut reordered, total_tokens);
 
-    // Count chunks rescued: were in dead zone before, now in strong zone.
     let moved_from_dead = reordered
         .iter()
         .filter(|c| before_dead.contains(&c.index) && c.attention_zone == AttentionZone::Strong)
@@ -149,38 +154,18 @@ fn cmd_optimize(
     let new_context = AppContext::new(reordered);
     let new_score = analyze(&new_context, "default").health_score;
 
-    // ── Serialize output ──────────────────────────────────────────────────
-    let messages: Vec<Message> = new_context.chunks.iter().map(|c| c.to_message()).collect();
-    let json = serde_json::to_string_pretty(&messages).context("Failed to serialize output")?;
+    emit_json(&new_context, output)?;
 
-    // Write to file or stdout. File path goes to --output; without it, stdout.
-    match &output {
-        Some(path) => {
-            std::fs::write(path, &json)
-                .with_context(|| format!("Cannot write to '{}'", path.display()))?;
-            eprintln!("Wrote optimized context to {}", path.display());
-        }
-        None => {
-            println!("{json}");
-        }
-    }
-
-    // ── Summary to stderr ─────────────────────────────────────────────────
     let n = new_context.chunk_count();
     eprintln!();
-
-    if let Some(q) = &query {
+    if let Some(q) = query {
         eprintln!("Query: \"{}\"", q);
     }
-
     eprintln!(
         "Reordered {} chunks. Moved {} high-relevance chunks from dead zone to safe positions.",
         n, moved_from_dead
     );
-
     if moved_from_dead > 0 {
-        // Estimate based on Liu et al.: 10–30% recall improvement for rescued content.
-        // Scale by what fraction of the dead zone we actually rescued.
         let rescue_ratio = moved_from_dead as f64 / dead_count_before.max(1) as f64;
         let estimate = if rescue_ratio > 0.5 {
             "~20-30%"
@@ -189,9 +174,58 @@ fn cmd_optimize(
         };
         eprintln!("Estimated recall improvement: {}", estimate);
     }
-
     eprintln!("Health score: {} -> {}", original_score, new_score);
+    Ok(())
+}
 
+fn run_structural(
+    context: &AppContext,
+    query: Option<&str>,
+    output: &Option<PathBuf>,
+) -> Result<()> {
+    let tokenizer = Tokenizer::new().context("Failed to initialize tokenizer")?;
+    let before_tokens = context.total_tokens;
+
+    let compressed = structural::apply(context, query, &tokenizer);
+    let new_context = AppContext::new(compressed);
+    let after_tokens = new_context.total_tokens;
+    let saved = before_tokens.saturating_sub(after_tokens);
+    // saturating_sub: if after > before (shouldn't happen), returns 0 instead of panicking.
+    let pct = if before_tokens > 0 {
+        (saved as f64 / before_tokens as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    emit_json(&new_context, output)?;
+
+    eprintln!();
+    if let Some(q) = query {
+        eprintln!("Query: \"{}\"", q);
+    }
+    eprintln!(
+        "Compressed {} chunks. Tokens: {} -> {} (saved {}, {:.1}% reduction)",
+        new_context.chunk_count(),
+        before_tokens,
+        after_tokens,
+        saved,
+        pct
+    );
+    Ok(())
+}
+
+/// Serialize context to JSON and write to --output file or stdout.
+fn emit_json(context: &AppContext, output: &Option<PathBuf>) -> Result<()> {
+    let messages: Vec<Message> = context.chunks.iter().map(|c| c.to_message()).collect();
+    let json = serde_json::to_string_pretty(&messages).context("Failed to serialize output")?;
+    match output {
+        Some(path) => {
+            std::fs::write(path, &json)
+                .with_context(|| format!("Cannot write to '{}'", path.display()))?;
+            eprintln!("Wrote optimized context to {}", path.display());
+        }
+        None => println!("{json}"),
+    }
     Ok(())
 }
 
