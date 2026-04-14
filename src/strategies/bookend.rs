@@ -156,6 +156,16 @@ fn score_by_heuristic(chunks: &mut [Chunk]) {
         return;
     }
 
+    // If chunks aren't from a conversation (e.g., RAG "document" chunks),
+    // their existing scores came from the retrieval system and are more
+    // meaningful than any heuristic we could apply. Preserve them.
+    let is_conversation = chunks
+        .iter()
+        .all(|c| matches!(c.role.as_str(), "system" | "user" | "assistant"));
+    if !is_conversation {
+        return;
+    }
+
     // Collect the Vec-position indices of the last 3 user messages.
     //
     // .rev() on a filtered iterator walks backward through the original

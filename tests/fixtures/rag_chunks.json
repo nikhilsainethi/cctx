@@ -1,0 +1,52 @@
+[
+  {
+    "content": "Connection pooling in PostgreSQL is managed by tools like PgBouncer or built-in pool settings. A connection pool maintains a set of idle database connections that can be reused by incoming requests, avoiding the overhead of establishing a new TCP connection and completing the authentication handshake for every query. For high-throughput applications serving thousands of requests per second, connection pooling is essential. Without it, each request creates and destroys a connection, which takes 50-100ms of overhead. PgBouncer sits between your application and PostgreSQL, multiplexing many client connections onto a smaller number of server connections.",
+    "score": 0.92,
+    "metadata": {"source": "postgres-guide.md", "section": "Connection Pooling"}
+  },
+  {
+    "content": "Redis is an in-memory data store commonly used as a cache, message broker, and session store. It supports data structures like strings, hashes, lists, sets, and sorted sets. Redis achieves sub-millisecond latency by keeping all data in RAM. For caching database queries, a typical pattern is to check Redis first, and only query PostgreSQL on a cache miss. Cache invalidation strategies include TTL-based expiry, write-through caching, and event-driven invalidation via pub/sub channels.",
+    "score": 0.35,
+    "metadata": {"source": "caching-patterns.md"}
+  },
+  {
+    "content": "PostgreSQL connection limits are configured via the max_connections parameter in postgresql.conf. The default is typically 100 connections. Each connection consumes approximately 5-10MB of RAM for work_mem, temp_buffers, and the connection's process overhead. Setting max_connections too high can lead to memory exhaustion and OS-level resource contention. A common production configuration uses max_connections=200 combined with PgBouncer in transaction pooling mode, which allows thousands of application connections to share those 200 database connections.",
+    "score": 0.89,
+    "metadata": {"source": "postgres-guide.md", "section": "Connection Limits"}
+  },
+  {
+    "content": "Kubernetes liveness probes check whether a container is running. If a liveness probe fails, Kubernetes restarts the container. Readiness probes check whether a container is ready to serve traffic. A common mistake is using a database connection check as a liveness probe — if the database goes down temporarily, all your pods restart simultaneously, causing a cascading failure. Use a simple HTTP 200 check for liveness, and reserve database connectivity checks for readiness probes only.",
+    "score": 0.30,
+    "metadata": {"source": "k8s-best-practices.md"}
+  },
+  {
+    "content": "When troubleshooting PostgreSQL connection errors, start by checking pg_stat_activity to see all active connections. The query SELECT count(*) FROM pg_stat_activity shows the current connection count. If this approaches max_connections, new connections will be refused with the error 'FATAL: too many connections for role'. Common causes include connection leaks (connections opened but never closed or returned to the pool), long-running transactions holding connections, and idle connections from connection pools that are oversized relative to max_connections.",
+    "score": 0.95,
+    "metadata": {"source": "postgres-guide.md", "section": "Troubleshooting"}
+  },
+  {
+    "content": "SQLAlchemy's async engine uses asyncpg under the hood for PostgreSQL connections. The engine's pool configuration is set at creation time: create_async_engine(url, pool_size=20, max_overflow=10, pool_timeout=30). pool_size is the number of persistent connections. max_overflow allows temporary additional connections under load. pool_timeout is how long a request waits for a free connection before raising a TimeoutError. If you see TimeoutError in your FastAPI logs, your pool is exhausted — either increase pool_size or fix connection leaks.",
+    "score": 0.88,
+    "metadata": {"source": "sqlalchemy-async.md"}
+  },
+  {
+    "content": "Database migrations should be run as a separate step from application deployment, not during application startup. Running migrations on startup means every pod in a Kubernetes deployment attempts the migration simultaneously, which can cause lock contention and failed deployments. Instead, use a Kubernetes Job or init container that runs migrations once before the rollout proceeds. Tools like Alembic (Python), Flyway (Java), and golang-migrate (Go) all support this pattern.",
+    "score": 0.31,
+    "metadata": {"source": "deployment-guide.md"}
+  },
+  {
+    "content": "PgBouncer supports three pooling modes: session, transaction, and statement. Session pooling assigns a server connection to a client for the entire session — similar to no pooling. Transaction pooling (recommended for most applications) assigns a server connection only for the duration of a transaction, then returns it to the pool. Statement pooling assigns a connection per statement, which breaks multi-statement transactions. For connection pooling in PostgreSQL with typical web applications, transaction mode gives the best connection reuse ratio while maintaining correctness.",
+    "score": 0.91,
+    "metadata": {"source": "postgres-guide.md", "section": "PgBouncer Modes"}
+  },
+  {
+    "content": "Monitoring PostgreSQL performance requires tracking several key metrics: connections (active, idle, waiting), transaction rates (commits/s, rollbacks/s), lock contention (pg_stat_activity.wait_event), replication lag (for replicas), and disk I/O (buffer hit ratio from pg_stat_bgwriter). Grafana dashboards with the postgres_exporter Prometheus exporter provide real-time visibility. Alert on connections approaching max_connections (80% threshold) and replication lag exceeding 30 seconds.",
+    "score": 0.72,
+    "metadata": {"source": "monitoring-guide.md"}
+  },
+  {
+    "content": "PostgreSQL connection pooling with PgBouncer is essential for production deployments. Without connection pooling, applications that open a new database connection per request will quickly exhaust the max_connections limit. PgBouncer reduces the number of actual PostgreSQL connections by multiplexing application connections. A typical setup: application connects to PgBouncer on port 6432, PgBouncer maintains a pool of connections to PostgreSQL on port 5432. Configure PgBouncer with default_pool_size=20 and max_client_conn=1000 for a standard web application.",
+    "score": 0.87,
+    "metadata": {"source": "pgbouncer-setup.md"}
+  }
+]

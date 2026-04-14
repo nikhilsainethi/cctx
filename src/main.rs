@@ -1,12 +1,14 @@
 use std::collections::HashSet;
+use std::io::{self, IsTerminal, Read};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
 
 use cctx::analyzer::health::{analyze, assign_attention_zones, print_chunk_table};
 use cctx::core::context::{AttentionZone, Chunk, Context as AppContext, Message};
 use cctx::core::tokenizer::Tokenizer;
+use cctx::formats::{self, InputFormat};
 use cctx::strategies::{bookend, structural};
 
 // ── CLI definition ────────────────────────────────────────────────────────────
@@ -22,46 +24,80 @@ struct Cli {
     command: Commands,
 }
 
+/// Output format for the `analyze` report.
 #[derive(Clone, ValueEnum)]
 enum OutputFormat {
     Terminal,
     Json,
 }
 
+/// Input format override. Default "auto" inspects the content to decide.
+///
+/// ValueEnum auto-generates CLI parsing: the user types `--input-format openai`
+/// and clap produces `InputFormatArg::Openai`.
+#[derive(Clone, ValueEnum)]
+enum InputFormatArg {
+    Auto,
+    Openai,
+    Anthropic,
+    Chunks,
+    Raw,
+}
+
+impl InputFormatArg {
+    /// Convert to the library's InputFormat. `Auto` → `None` (let detection decide).
+    fn to_lib(&self) -> Option<InputFormat> {
+        match self {
+            Self::Auto => None,
+            Self::Openai => Some(InputFormat::OpenAi),
+            Self::Anthropic => Some(InputFormat::Anthropic),
+            Self::Chunks => Some(InputFormat::RagChunks),
+            Self::Raw => Some(InputFormat::Raw),
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
-    /// Analyze a context file and report health metrics (tokens, dead zones, duplication, score).
+    /// Analyze context health (tokens, dead zones, duplication, score).
     Analyze {
-        /// Path to a JSON file: array of {"role": "...", "content": "..."} objects.
-        file: PathBuf,
+        /// Input file. Omit or use "-" to read from stdin.
+        file: Option<PathBuf>,
+
+        /// Input format. Auto-detects by default.
+        /// openai: [{role, content}]  anthropic: [{role, content:[{type,text}]}]
+        /// chunks: [{content, score?}]  raw: plain text
+        #[arg(long, value_enum, default_value_t = InputFormatArg::Auto)]
+        input_format: InputFormatArg,
 
         /// Target model for budget calculation.
-        /// Supported: gpt-4o (128k), claude-sonnet (200k), claude-opus (200k), gpt-3.5-turbo (16k).
         #[arg(long, default_value = "default")]
         model: String,
 
-        /// Output format: terminal (pretty box report) or json (machine-readable).
+        /// Output format: terminal (pretty report) or json (machine-readable).
         #[arg(long, value_enum, default_value_t = OutputFormat::Terminal)]
         format: OutputFormat,
     },
 
-    /// Optimize a context file by applying a strategy and output the result as JSON.
+    /// Optimize context and emit result as JSON to stdout (or --output file).
     Optimize {
-        /// Path to a JSON file (same format as `analyze`).
-        file: PathBuf,
+        /// Input file. Omit or use "-" to read from stdin.
+        file: Option<PathBuf>,
+
+        /// Input format. Auto-detects by default.
+        #[arg(long, value_enum, default_value_t = InputFormatArg::Auto)]
+        input_format: InputFormatArg,
 
         /// Strategy to apply. Supported: bookend, structural
         #[arg(long, default_value = "bookend")]
         strategy: String,
 
-        /// Score chunk relevance against this query using TF-IDF.
-        /// Without this, uses a heuristic: system messages and last 3 user
-        /// messages get highest priority.
+        /// Score chunk relevance against this query (TF-IDF for bookend,
+        /// section relevance for structural markdown collapse).
         #[arg(long)]
         query: Option<String>,
 
         /// Write output to a file instead of stdout.
-        /// When omitted, optimized JSON goes to stdout (pipe-friendly).
         #[arg(long)]
         output: Option<PathBuf>,
     },
@@ -74,55 +110,86 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Analyze {
             file,
+            input_format,
             model,
             format,
-        } => cmd_analyze(file, model, format),
+        } => {
+            let raw = read_input(&file)?;
+            let context = build_context(&raw, input_format.to_lib())?;
+            cmd_analyze(&context, &model, format)
+        }
         Commands::Optimize {
             file,
+            input_format,
             strategy,
             query,
             output,
-        } => cmd_optimize(file, strategy, query, output),
+        } => {
+            let raw = read_input(&file)?;
+            let context = build_context(&raw, input_format.to_lib())?;
+            cmd_optimize(&context, &strategy, query.as_deref(), &output)
+        }
+    }
+}
+
+// ── Input reading ─────────────────────────────────────────────────────────────
+
+/// Read from a file path, or from stdin when the path is omitted / is "-".
+///
+/// `IsTerminal` (std since Rust 1.70) checks whether stdin is connected to a
+/// keyboard (interactive) vs a pipe. If it's a terminal we bail instead of
+/// blocking forever waiting for the user to type EOF.
+fn read_input(file: &Option<PathBuf>) -> Result<String> {
+    match file {
+        Some(path) if path.to_str() != Some("-") => std::fs::read_to_string(path)
+            .with_context(|| format!("Cannot read '{}'", path.display())),
+        _ => {
+            // No file or "-" → read from stdin.
+            if io::stdin().is_terminal() {
+                anyhow::bail!(
+                    "No input file. Provide a path or pipe data to stdin:\n  \
+                     cctx analyze input.json\n  \
+                     cat input.json | cctx analyze\n  \
+                     echo 'hello world' | cctx analyze --input-format raw"
+                );
+            }
+            let mut buf = String::new();
+            io::stdin()
+                .read_to_string(&mut buf)
+                .context("Failed to read from stdin")?;
+            Ok(buf)
+        }
     }
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-fn cmd_analyze(file: PathBuf, model: String, format: OutputFormat) -> Result<()> {
-    let context = build_context(&file)?;
-    let report = analyze(&context, &model);
-
+fn cmd_analyze(context: &AppContext, model: &str, format: OutputFormat) -> Result<()> {
+    let report = analyze(context, model);
     match format {
         OutputFormat::Terminal => {
-            print_chunk_table(&context);
+            print_chunk_table(context);
             report.print_terminal();
         }
-        OutputFormat::Json => {
-            report.print_json();
-        }
+        OutputFormat::Json => report.print_json(),
     }
-
     Ok(())
 }
 
 fn cmd_optimize(
-    file: PathBuf,
-    strategy: String,
-    query: Option<String>,
-    output: Option<PathBuf>,
+    context: &AppContext,
+    strategy: &str,
+    query: Option<&str>,
+    output: &Option<PathBuf>,
 ) -> Result<()> {
-    let context = build_context(&file)?;
-
-    match strategy.as_str() {
-        "bookend" => run_bookend(&context, query.as_deref(), &output)?,
-        "structural" => run_structural(&context, query.as_deref(), &output)?,
+    match strategy {
+        "bookend" => run_bookend(context, query, output),
+        "structural" => run_structural(context, query, output),
         other => anyhow::bail!(
             "Unknown strategy '{}'. Supported: bookend, structural",
             other
         ),
     }
-
-    Ok(())
 }
 
 // ── Strategy runners ──────────────────────────────────────────────────────────
@@ -190,7 +257,6 @@ fn run_structural(
     let new_context = AppContext::new(compressed);
     let after_tokens = new_context.total_tokens;
     let saved = before_tokens.saturating_sub(after_tokens);
-    // saturating_sub: if after > before (shouldn't happen), returns 0 instead of panicking.
     let pct = if before_tokens > 0 {
         (saved as f64 / before_tokens as f64) * 100.0
     } else {
@@ -214,7 +280,9 @@ fn run_structural(
     Ok(())
 }
 
-/// Serialize context to JSON and write to --output file or stdout.
+// ── Output ────────────────────────────────────────────────────────────────────
+
+/// Data goes to stdout (pipe-friendly), human messages go to stderr.
 fn emit_json(context: &AppContext, output: &Option<PathBuf>) -> Result<()> {
     let messages: Vec<Message> = context.chunks.iter().map(|c| c.to_message()).collect();
     let json = serde_json::to_string_pretty(&messages).context("Failed to serialize output")?;
@@ -229,14 +297,17 @@ fn emit_json(context: &AppContext, output: &Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Context building ──────────────────────────────────────────────────────────
 
-fn build_context(file: &PathBuf) -> Result<AppContext> {
-    let raw = std::fs::read_to_string(file)
-        .with_context(|| format!("Cannot read file '{}'", file.display()))?;
+/// Parse raw input into messages (using format detection), count tokens,
+/// assign attention zones, and return a ready-to-use Context.
+fn build_context(raw: &str, input_format: Option<InputFormat>) -> Result<AppContext> {
+    let messages =
+        formats::parse_input(raw, input_format).context("Failed to parse input")?;
 
-    let messages: Vec<Message> = serde_json::from_str(&raw)
-        .context("Invalid JSON — expected an array of {\"role\": ..., \"content\": ...} objects")?;
+    if messages.is_empty() {
+        anyhow::bail!("Input is empty — no messages or chunks found");
+    }
 
     let tokenizer = Tokenizer::new().context("Failed to initialize BPE tokenizer")?;
     let n = messages.len();
@@ -256,7 +327,7 @@ fn build_context(file: &PathBuf) -> Result<AppContext> {
                 content: msg.content.clone(),
                 token_count: tokenizer.count(&msg.content),
                 relevance_score: relevance,
-                attention_zone: AttentionZone::Strong, // placeholder
+                attention_zone: AttentionZone::Strong,
             }
         })
         .collect();
@@ -267,9 +338,6 @@ fn build_context(file: &PathBuf) -> Result<AppContext> {
     Ok(AppContext::new(chunks))
 }
 
-/// Initial relevance score assigned during context building.
-/// The bookend strategy overrides these with its own scoring, but other
-/// strategies (future) may use these defaults.
 fn default_relevance(role: &str, index: usize, total: usize) -> f64 {
     if role == "system" {
         return 1.0;

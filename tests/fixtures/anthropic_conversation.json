@@ -1,0 +1,40 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "I have a Rust project that compiles fine on my machine but fails in CI. Here's the error:"},
+      {"type": "text", "text": "error[E0308]: mismatched types\n  --> src/main.rs:42:18\n   |\n42 |     let result: String = compute_value();\n   |                ------   ^^^^^^^^^^^^^^^ expected `String`, found `&str`\n   |                |\n   |                expected due to this"}
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": "The error tells you that `compute_value()` returns `&str` (a borrowed string slice) but you're trying to assign it to a `String` (an owned string). These are different types in Rust.\n\nYou have two options:\n\n1. Change the variable type to `&str`:\n```rust\nlet result: &str = compute_value();\n```\n\n2. Convert to an owned `String`:\n```rust\nlet result: String = compute_value().to_string();\n```\n\nOption 2 allocates new heap memory. Option 1 is zero-cost but the reference must not outlive the data it borrows.\n\nThe reason it works on your machine might be that you're on a different Rust toolchain version. Check `rustc --version` locally vs in CI."
+  },
+  {
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "I went with `.to_string()` and the type error is fixed. But now I'm getting a lifetime error:"},
+      {"type": "text", "text": "error[E0515]: cannot return reference to local variable `buffer`\n  --> src/lib.rs:15:5\n   |\n15 |     &buffer\n   |     ^^^^^^^ returns a reference to data owned by the current function"}
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {"type": "text", "text": "This is a classic Rust ownership problem. The function creates `buffer` as a local variable, and you're trying to return a reference (`&buffer`) to it. When the function ends, `buffer` is dropped (freed), so the reference would be dangling."},
+      {"type": "text", "text": "The fix: return the owned value instead of a reference.\n\nChange your function signature from:\n```rust\nfn build_message() -> &str {\n    let buffer = format!(\"hello {}\", name);\n    &buffer  // ERROR: buffer is dropped here\n}\n```\n\nTo:\n```rust\nfn build_message() -> String {\n    let buffer = format!(\"hello {}\", name);\n    buffer  // OK: ownership moves to the caller\n}\n```"},
+      {"type": "text", "text": "Key rule: never return a reference to something created inside the function, unless the data lives in `self`, a `'static` lifetime, or is passed in as a parameter."}
+    ]
+  },
+  {
+    "role": "user",
+    "content": "That fixed it! One more question — when should I use String vs &str in function parameters?"
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {"type": "text", "text": "General rule: accept `&str` in function parameters, return `String` when the function creates new data.\n\n```rust\n// Good: accepts &str — works with both String and &str callers\nfn greet(name: &str) -> String {\n    format!(\"Hello, {}!\", name)\n}\n\n// Caller can pass either:\ngreet(\"world\");                    // &str literal\ngreet(&my_string);                  // &String auto-derefs to &str\n```"},
+      {"type": "text", "text": "Use `String` as a parameter only when the function needs to own the data (e.g., storing it in a struct, sending to another thread, or mutating it).\n\n```rust\nstruct User {\n    name: String,  // owns the data\n}\n\nimpl User {\n    // Takes String because we're storing it\n    fn new(name: String) -> Self {\n        User { name }\n    }\n}\n```"},
+      {"type": "text", "text": "Summary:\n- `&str` for reading: cheap, no allocation, maximum flexibility\n- `String` for owning: when the data needs to outlive the call or be mutated\n- `&String` almost never — `&str` is strictly more flexible"}
+    ]
+  }
+]
