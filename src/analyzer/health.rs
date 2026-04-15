@@ -68,7 +68,7 @@ pub struct HealthReport {
 /// U-curve model (Liu et al., TACL 2024):
 ///   STRONG    = first 25% or last 25% of tokens
 ///   DEAD ZONE = middle 50%
-pub fn assign_attention_zones(chunks: &mut Vec<Chunk>, total_tokens: usize) {
+pub fn assign_attention_zones(chunks: &mut [Chunk], total_tokens: usize) {
     let mut cumulative = 0usize;
     for chunk in chunks.iter_mut() {
         let pos = if total_tokens == 0 {
@@ -76,7 +76,7 @@ pub fn assign_attention_zones(chunks: &mut Vec<Chunk>, total_tokens: usize) {
         } else {
             cumulative as f64 / total_tokens as f64
         };
-        chunk.attention_zone = if pos < 0.25 || pos >= 0.75 {
+        chunk.attention_zone = if !(0.25..0.75).contains(&pos) {
             AttentionZone::Strong
         } else {
             AttentionZone::DeadZone
@@ -144,9 +144,9 @@ pub fn analyze(context: &Context, model: &str) -> HealthReport {
     // ── Recommendations ───────────────────────────────────────────────────
     let mut recs = Vec::new();
     if dz_score < 80 {
-        recs.push(format!(
-            "Run `cctx optimize --strategy bookend` to fix dead zone placement"
-        ));
+        recs.push(
+            "Run `cctx optimize --strategy bookend` to fix dead zone placement".to_string(),
+        );
     }
     if dup_score < 90 && dup_tokens > 0 {
         recs.push(format!(
@@ -316,8 +316,8 @@ impl HealthReport {
 pub fn print_chunk_table(context: &Context) {
     println!();
     println!(
-        "  {:<4} {:<12} {:>8}  {:<12} {}",
-        "idx", "role", "tokens", "zone", "relevance"
+        "  {:<4} {:<12} {:>8}  {:<12} relevance",
+        "idx", "role", "tokens", "zone"
     );
     // "─" is a Unicode box-drawing dash — nicer than ASCII "-".
     println!("  {}", "─".repeat(56));
@@ -425,7 +425,7 @@ fn format_number(n: usize) -> String {
     let mut result = String::with_capacity(s.len() + s.len() / 3);
     for (i, &ch) in chars.iter().enumerate() {
         // Insert comma before every group of 3 digits (not at position 0).
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(ch);

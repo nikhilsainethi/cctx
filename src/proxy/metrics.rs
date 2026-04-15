@@ -91,6 +91,7 @@ impl Default for Metrics {
 
 impl Metrics {
     /// Record a completed request with optimization results.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_request(
         &self,
         model: &str,
@@ -126,11 +127,11 @@ impl Metrics {
         }
 
         // Per-strategy counts.
-        if was_optimized {
-            if let Ok(mut map) = self.strategies_applied.lock() {
-                for name in strategies {
-                    *map.entry(name.clone()).or_default() += 1;
-                }
+        if was_optimized
+            && let Ok(mut map) = self.strategies_applied.lock()
+        {
+            for name in strategies {
+                *map.entry(name.clone()).or_default() += 1;
             }
         }
 

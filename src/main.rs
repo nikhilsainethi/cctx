@@ -299,10 +299,8 @@ fn main() -> Result<()> {
             for name in &strategy {
                 cctx::pipeline::make_strategy(name)?;
             }
-            if let Some(b) = budget {
-                if b == 0 {
-                    anyhow::bail!("Budget must be a positive number");
-                }
+            if let Some(0) = budget {
+                anyhow::bail!("Budget must be a positive number");
             }
             let rt =
                 tokio::runtime::Runtime::new().context("Failed to create tokio async runtime")?;
@@ -376,6 +374,7 @@ fn cmd_analyze(context: &AppContext, model: &str, format: OutputFormat) -> Resul
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_optimize(
     context: AppContext,
     strategy_args: Vec<String>,
@@ -391,10 +390,8 @@ fn cmd_optimize(
         eprintln!("No context to optimize");
         return Ok(());
     }
-    if let Some(b) = budget {
-        if b == 0 {
-            anyhow::bail!("Budget must be a positive number");
-        }
+    if let Some(0) = budget {
+        anyhow::bail!("Budget must be a positive number");
     }
 
     let before_tokens = context.total_tokens;
@@ -605,7 +602,7 @@ fn print_diff_terminal(
         let chars: Vec<char> = s.chars().collect();
         let mut r = String::with_capacity(s.len() + s.len() / 3);
         for (i, &ch) in chars.iter().enumerate() {
-            if i > 0 && (chars.len() - i) % 3 == 0 {
+            if i > 0 && (chars.len() - i).is_multiple_of(3) {
                 r.push(',');
             }
             r.push(ch);

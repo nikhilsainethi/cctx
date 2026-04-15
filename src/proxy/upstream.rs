@@ -110,10 +110,10 @@ fn convert_response_headers(src: &reqwest::header::HeaderMap) -> HeaderMap {
         ) {
             continue;
         }
-        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes()) {
-            if let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
-                dst.insert(n, v);
-            }
+        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes())
+            && let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes())
+        {
+            dst.insert(n, v);
         }
     }
     dst

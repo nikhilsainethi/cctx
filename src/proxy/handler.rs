@@ -52,7 +52,7 @@ pub async fn chat_completions(
     let has_messages = parsed
         .get("messages")
         .and_then(|m| m.as_array())
-        .map_or(false, |a| !a.is_empty());
+        .is_some_and(|a| !a.is_empty());
     let is_streaming = parsed
         .get("stream")
         .and_then(|s| s.as_bool())
@@ -332,10 +332,10 @@ async fn handle_streaming(
                 ) {
                     continue;
                 }
-                if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes()) {
-                    if let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
-                        builder = builder.header(n, v);
-                    }
+                if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes())
+                    && let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes())
+                {
+                    builder = builder.header(n, v);
                 }
             }
             builder = builder
@@ -431,10 +431,10 @@ async fn response_from_reqwest(resp: reqwest::Response) -> Response {
         ) {
             continue;
         }
-        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes()) {
-            if let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
-                builder = builder.header(n, v);
-            }
+        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes())
+            && let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes())
+        {
+            builder = builder.header(n, v);
         }
     }
     match resp.bytes().await {

@@ -60,7 +60,7 @@ pub fn detect_format(raw: &str) -> InputFormat {
         let has_block_content = arr.iter().any(|msg| {
             msg.get("content")
                 .and_then(|c| c.as_array())
-                .map_or(false, |blocks| {
+                .is_some_and(|blocks| {
                     blocks.iter().any(|b| b.get("type").is_some())
                 })
         });

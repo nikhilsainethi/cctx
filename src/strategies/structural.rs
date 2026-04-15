@@ -62,14 +62,14 @@ fn parse_blocks(content: &str) -> Vec<ContentBlock> {
         let trimmed = line.trim();
 
         // Toggle fence state on ``` lines.
-        if trimmed.starts_with("```") {
+        if let Some(after_ticks) = trimmed.strip_prefix("```") {
             if !in_fence {
                 // ── Opening fence ──
                 if !text_buf.is_empty() {
                     blocks.push(classify_text(std::mem::take(&mut text_buf)));
                 }
                 // Everything after ``` is the language tag (e.g. "json", "python").
-                fence_lang = trimmed[3..].trim().to_string();
+                fence_lang = after_ticks.trim().to_string();
                 fence_buf.clear();
                 in_fence = true;
             } else {
@@ -220,10 +220,8 @@ fn prune_value(value: Value, depth: usize) -> Value {
             // Only flatten if the wrapper key is a generic name.
             if pruned.len() == 1 {
                 let (key, val) = pruned.iter().next().unwrap();
-                if is_wrapper_key(key) {
-                    if let Value::Object(_) = val {
-                        return val.clone();
-                    }
+                if is_wrapper_key(key) && matches!(val, Value::Object(_)) {
+                    return val.clone();
                 }
             }
 
@@ -259,10 +257,10 @@ fn should_prune_field(key: &str, value: &Value) -> bool {
     }
 
     // Values that look like UUIDs (8-4-4-4-12 hex pattern).
-    if let Value::String(s) = value {
-        if is_uuid_like(s) {
-            return true;
-        }
+    if let Value::String(s) = value
+        && is_uuid_like(s)
+    {
+        return true;
     }
 
     false
