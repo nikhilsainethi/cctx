@@ -357,7 +357,7 @@ fn run_pipeline_sync(messages: Vec<Message>, strategy_names: &[String], config: 
     let context = Context::new(chunks);
     let original_tokens = context.total_tokens as u64;
     let optimized = if strategy_names.is_empty() { context } else {
-        let pc = PipelineConfig { query: config.query.clone(), tokenizer: Tokenizer::new()?, embedding_provider: config.embedding_provider.clone(), dedup_threshold: config.dedup_threshold };
+        let pc = PipelineConfig { query: config.query.clone(), tokenizer: Tokenizer::new()?, embedding_provider: config.embedding_provider.clone(), dedup_threshold: config.dedup_threshold, prune_threshold: config.prune_threshold };
         let mut pipeline = Pipeline::new(pc);
         for name in strategy_names { pipeline.add(make_strategy(name)?); }
         pipeline.run(context)?

@@ -99,6 +99,10 @@ enum Commands {
         /// Cosine similarity threshold for semantic dedup (0.0-1.0).
         #[arg(long, default_value_t = 0.85)]
         dedup_threshold: f64,
+        /// Importance score threshold for sentence pruning (0.0-1.0).
+        /// Sentences scoring below this are removed.
+        #[arg(long, default_value_t = 0.3)]
+        prune_threshold: f64,
     },
 
     /// Compress context to fit a hard token budget.
@@ -212,11 +216,12 @@ fn main() -> Result<()> {
             output,
             embedding_provider,
             dedup_threshold,
+            prune_threshold,
         } => {
             let raw = read_input(&file)?;
             let ctx = build_context(&raw, input_format.to_lib())?;
             let provider = make_embedding_provider(embedding_provider.as_deref())?;
-            cmd_optimize(ctx, strategy, preset, query, budget, &output, provider, dedup_threshold)
+            cmd_optimize(ctx, strategy, preset, query, budget, &output, provider, dedup_threshold, prune_threshold)
         }
         Commands::Compress {
             file,
@@ -375,6 +380,7 @@ fn cmd_optimize(
     output: &Option<PathBuf>,
     embedding_provider: Option<std::sync::Arc<dyn cctx::embeddings::EmbeddingProvider>>,
     dedup_threshold: f64,
+    prune_threshold: f64,
 ) -> Result<()> {
     if context.chunk_count() == 0 {
         eprintln!("No context to optimize");
@@ -406,6 +412,7 @@ fn cmd_optimize(
         tokenizer: Tokenizer::new().context("Failed to initialize tokenizer")?,
         embedding_provider,
         dedup_threshold,
+        prune_threshold,
     };
     let mut pipeline = Pipeline::new(config);
     for name in &names {
@@ -449,6 +456,7 @@ fn cmd_compress(
         tokenizer: Tokenizer::new().context("Failed to initialize tokenizer")?,
         embedding_provider: None,
         dedup_threshold: 0.85,
+        prune_threshold: 0.3,
     };
     let mut pipeline = Pipeline::new(config);
     pipeline.add(make_strategy("structural")?);

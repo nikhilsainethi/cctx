@@ -9,7 +9,7 @@ use anyhow::Result;
 use crate::core::context::{Chunk, Context};
 use crate::core::tokenizer::Tokenizer;
 use crate::embeddings::EmbeddingProvider;
-use crate::strategies::{bookend, dedup, structural};
+use crate::strategies::{bookend, dedup, prune, structural};
 
 // ── Strategy trait ────────────────────────────────────────────────────────────
 
@@ -27,6 +27,8 @@ pub struct PipelineConfig {
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     /// Cosine similarity threshold for semantic dedup (default 0.85).
     pub dedup_threshold: f64,
+    /// Importance score threshold for sentence pruning (default 0.3).
+    pub prune_threshold: f64,
 }
 
 // ── Strategy wrappers ─────────────────────────────────────────────────────────
@@ -79,6 +81,17 @@ impl Strategy for DeduplicateStrategy {
     }
 }
 
+pub struct PruneStrategy;
+
+impl Strategy for PruneStrategy {
+    fn name(&self) -> &str {
+        "prune"
+    }
+    fn apply(&self, context: &Context, config: &PipelineConfig) -> Result<Vec<Chunk>> {
+        Ok(prune::apply(context, config.prune_threshold, &config.tokenizer))
+    }
+}
+
 // ── Factory + presets ─────────────────────────────────────────────────────────
 
 pub fn make_strategy(name: &str) -> Result<Box<dyn Strategy>> {
@@ -86,8 +99,9 @@ pub fn make_strategy(name: &str) -> Result<Box<dyn Strategy>> {
         "bookend" => Ok(Box::new(BookendStrategy)),
         "structural" => Ok(Box::new(StructuralStrategy)),
         "dedup" => Ok(Box::new(DeduplicateStrategy)),
+        "prune" => Ok(Box::new(PruneStrategy)),
         other => anyhow::bail!(
-            "Unknown strategy '{}'. Supported: bookend, structural, dedup",
+            "Unknown strategy '{}'. Supported: bookend, structural, dedup, prune",
             other
         ),
     }
@@ -97,7 +111,7 @@ pub fn preset_strategies(preset: &str) -> Result<Vec<&'static str>> {
     match preset {
         "safe" => Ok(vec!["bookend"]),
         "balanced" => Ok(vec!["bookend", "structural"]),
-        "aggressive" => Ok(vec!["bookend", "structural", "dedup"]),
+        "aggressive" => Ok(vec!["bookend", "structural", "dedup", "prune"]),
         other => anyhow::bail!(
             "Unknown preset '{}'. Supported: safe, balanced, aggressive",
             other

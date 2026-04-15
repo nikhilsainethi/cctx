@@ -22,6 +22,7 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         tokenizer: Tokenizer::new()?,
         embedding_provider,
         dedup_threshold: config.dedup_threshold,
+        prune_threshold: 0.3,
     });
 
     let strategy_label = if config.strategy_names.is_empty() {
