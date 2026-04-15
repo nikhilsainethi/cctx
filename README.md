@@ -33,6 +33,40 @@ cctx optimize conversation.json --strategy bookend --strategy structural
 cctx compress conversation.json --budget 32000
 ```
 
+## Demo
+
+```
+$ cctx analyze conversation.json
+╭────────────────────────────────────────────────────────╮
+│             cctx Context Health Report                 │
+├────────────────────────────────────────────────────────┤
+│  Overall Health:  82/100  ✓  GOOD                      │
+├────────────────────────────────────────────────────────┤
+│  Total Tokens:        4,868                            │
+│  Dead zone:       1,862 tokens (38.2%) in dead zone    │
+│  Duplication:       232 tokens (4.8%) near-duplicates  │
+╰────────────────────────────────────────────────────────╯
+
+$ cctx optimize conversation.json --preset balanced --output optimized.json
+Pipeline: bookend, structural
+  bookend      :: 4868 -> 4868 tokens  (0.0ms)
+  structural   :: 4868 -> 3643 tokens  (1.6ms)
+Tokens: 4868 -> 3643 (saved 1225, 25.2% reduction)
+
+$ cctx diff conversation.json optimized.json
+┌─────────────────────┬──────────┬──────────┬──────────┐
+│ Metric              │   Before │    After │   Change │
+├─────────────────────┼──────────┼──────────┼──────────┤
+│ Total tokens        │    4,868 │    3,643 │   -25.2% │
+│ Dead zone tokens    │    1,862 │    1,043 │   -44.0% │
+│ Health score        │       82 │       86 │       +4 │
+└─────────────────────┴──────────┴──────────┴──────────┘
+```
+
+Run the full interactive demo: `./scripts/demo.sh`
+
+Record it: install [vhs](https://github.com/charmbracelet/vhs) then `vhs scripts/record-demo.tape`
+
 ## What It Does
 
 | Command | Purpose |
@@ -59,9 +93,13 @@ LLMs attend most strongly to the beginning and end of context. Bookend sorts chu
 
 Three sub-strategies: **JSON pruning** removes timestamps, UUIDs, metadata fields, and collapses objects deeper than 3 levels. **Code signature extraction** keeps function/class signatures and docstrings, replaces bodies with line counts (Python, JavaScript, TypeScript, Rust). **Markdown collapse** uses `--query` to identify relevant sections and collapses the rest to headers only. **Cost: typically 25-50% token reduction** on structured content.
 
-### Exact Deduplication
+### Semantic Deduplication
 
-Removes messages with identical content. A stub for the full semantic deduplication (coming with embedding support).
+Detects near-duplicate content using embeddings (cosine similarity). Keeps the longer chunk; merges unique sentences from the shorter one. Three providers: `--embedding-provider tfidf` (built-in, no deps), `ollama` (local, requires `--features embeddings`), `openai` (API, requires `--features embeddings`).
+
+### Importance Pruning
+
+Scores each line by stop-word ratio, repetition, structural importance, filler phrase detection, and length. Removes low-scoring lines (conversational filler like "Sure, I can help!", "Great question!", short acknowledgments). System messages and last 2 user messages are never pruned.
 
 ### Presets
 
@@ -69,7 +107,7 @@ Removes messages with identical content. A stub for the full semantic deduplicat
 |--------|-----------|----------|
 | `--preset safe` | bookend | Reorder only. Never removes content. |
 | `--preset balanced` | bookend + structural | Good default. Reorder + compress structured content. |
-| `--preset aggressive` | bookend + structural + dedup | Maximum reduction. Removes duplicates too. |
+| `--preset aggressive` | bookend + structural + dedup + prune | Maximum reduction. Dedup + filler removal. |
 
 ## Input Formats
 
@@ -94,15 +132,30 @@ curl -s api.example.com/context | cctx optimize --preset balanced | curl -X POST
 
 ## Proxy Mode
 
-> Coming soon.
-
-The planned killer feature: an OpenAI-compatible HTTP proxy that optimizes context transparently. Change one line (the base URL) and every API call goes through cctx automatically.
+An OpenAI-compatible HTTP proxy that optimizes context transparently. Change one line (the base URL) and every API call flows through cctx automatically. No code changes to your application.
 
 ```bash
-cctx proxy --listen 127.0.0.1:8080 --upstream https://api.openai.com --preset balanced
+# Install with proxy support
+cargo install cctx --features proxy
+
+# Start the proxy
+cctx proxy --listen 127.0.0.1:8080 \
+  --upstream https://api.openai.com \
+  --strategy bookend --strategy structural
+
+# Point your app at the proxy
 export OPENAI_BASE_URL=http://127.0.0.1:8080
-# Existing code works unchanged — cctx optimizes every request.
+# Every API call now gets optimized automatically.
 ```
+
+Features:
+- **Streaming support** — SSE responses forwarded chunk-by-chunk, zero buffering
+- **Token budget** — `--budget 32000` enforces a hard limit per request
+- **Dry-run mode** — `--dry-run` logs savings without modifying requests
+- **Live dashboard** — `--dashboard` shows real-time stats on stderr
+- **Metrics API** — `GET /cctx/metrics` returns JSON with requests, tokens saved, cost estimates, per-model breakdowns
+- **Catch-all routing** — all OpenAI endpoints (embeddings, models, audio) pass through transparently
+- **Model pricing** — tracks estimated cost savings per model (GPT-4o, Claude Sonnet, etc.)
 
 ## Benchmarks
 
@@ -123,10 +176,28 @@ With `--budget`, larger reductions are possible: `cctx compress large_conversati
 
 ## Installation
 
-### From source (requires Rust 1.70+)
+### Core CLI (no network dependencies)
 
 ```bash
 cargo install cctx
+```
+
+### With proxy server
+
+```bash
+cargo install cctx --features proxy
+```
+
+### With embedding providers (Ollama, OpenAI)
+
+```bash
+cargo install cctx --features embeddings
+```
+
+### Everything
+
+```bash
+cargo install cctx --features "proxy,embeddings"
 ```
 
 ### From git
@@ -134,7 +205,8 @@ cargo install cctx
 ```bash
 git clone https://github.com/nikhilsainethi/cctx.git
 cd cctx
-cargo build --release
+cargo build --release                          # Core CLI
+cargo build --release --features "proxy,embeddings"  # Full
 # Binary at target/release/cctx
 ```
 
@@ -150,15 +222,27 @@ src/
 ├── analyzer/
 │   ├── health.rs            # Health scoring (dead zone, duplication, budget)
 │   └── duplication.rs       # Jaccard word-similarity duplicate detection
+├── embeddings/
+│   ├── mod.rs               # EmbeddingProvider trait, cosine similarity
+│   ├── tfidf.rs             # TF-IDF mock embedder (no external deps)
+│   ├── ollama.rs            # Ollama local embedding provider [feature: embeddings]
+│   └── openai.rs            # OpenAI embedding provider [feature: embeddings]
 ├── formats/
 │   └── mod.rs               # Input format auto-detection and parsing
 ├── strategies/
-│   ├── bookend.rs           # Attention-aware reordering
+│   ├── bookend.rs           # Attention-aware reordering (TF-IDF or heuristic)
 │   ├── structural.rs        # JSON pruning, code signatures, markdown collapse
-│   └── dedup.rs             # Exact-match deduplication
-└── pipeline/
-    ├── mod.rs               # Strategy trait, presets, factory
-    └── executor.rs          # Sequential pipeline execution, budget enforcement
+│   ├── dedup.rs             # Exact-match + semantic deduplication
+│   └── prune.rs             # Importance-aware sentence pruning
+├── pipeline/
+│   ├── mod.rs               # Strategy trait, presets, factory
+│   └── executor.rs          # Sequential pipeline execution, budget enforcement
+└── proxy/                   # [feature: proxy]
+    ├── server.rs            # axum router, startup, dashboard task
+    ├── handler.rs           # Request parsing, optimization, forwarding
+    ├── upstream.rs          # HTTP client for upstream API
+    ├── metrics.rs           # Atomic counters, per-model cost tracking
+    └── dashboard.rs         # Live terminal stats display
 ```
 
 ## Contributing
@@ -166,10 +250,11 @@ src/
 Contributions welcome. The codebase is intentionally well-commented — it serves as a Rust learning resource alongside being a real tool.
 
 Areas where help is needed:
-- **Semantic deduplication** — embedding-based near-duplicate detection (Tier 1)
-- **Proxy mode** — OpenAI-compatible HTTP server with transparent optimization
 - **Benchmarks** — formal evaluation on public datasets with LLM-as-judge quality scoring
-- **Additional strategies** — hierarchical summarization, importance-aware pruning
+- **Hierarchical summarization** — LLM-powered context compression (Tier 2 strategy)
+- **Streaming optimization** — parse and count tokens from SSE response chunks
+- **More languages** — code signature extraction for Java, Go, C#, PHP
+- **Homebrew formula** — `brew install cctx`
 
 ## License
 
