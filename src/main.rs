@@ -122,6 +122,23 @@ enum Commands {
         input_format: InputFormatArg,
     },
 
+    /// Run as an OpenAI-compatible proxy server.
+    ///
+    /// Intercepts /v1/chat/completions requests, optimizes context, and
+    /// forwards to the upstream API. Change your base URL and every API
+    /// call flows through cctx automatically.
+    ///
+    /// Requires: cargo build --features proxy
+    #[cfg(feature = "proxy")]
+    Proxy {
+        /// Address to listen on.
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        listen: String,
+        /// Upstream LLM API base URL.
+        #[arg(long)]
+        upstream: String,
+    },
+
     /// Compare two context files side-by-side (before vs after).
     ///
     /// Shows token changes, message differences, dead zone improvements,
@@ -191,6 +208,48 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        // ── Proxy command ──────────────────────────────────────────────────
+        //
+        // #[cfg(feature = "proxy")] means this arm only exists when compiled
+        // with --features proxy. Without it, `cctx proxy` is "unrecognized".
+        //
+        // We create a tokio Runtime manually rather than marking main() as
+        // #[tokio::main] because we don't want to require tokio for CLI-only
+        // users. The runtime is only constructed when someone actually runs
+        // the proxy command.
+        //
+        // # Sync vs Async (the key difference from everything else in cctx)
+        //
+        // All our CLI commands so far are synchronous: each function call
+        // blocks the current thread until it completes. This is fine for a
+        // CLI that does one thing and exits.
+        //
+        // The proxy is different: it handles many concurrent HTTP requests.
+        // With sync code, you'd need one OS thread per concurrent request
+        // (expensive — each thread uses ~8MB of stack). With async, a single
+        // thread can handle thousands of requests by switching between them
+        // at `.await` points (when waiting for network I/O).
+        //
+        // tokio is the async runtime that makes this work. It provides:
+        //   - A multi-threaded task scheduler (like a green-thread executor)
+        //   - An I/O driver that wakes tasks when sockets are ready
+        //   - Timers, channels, and sync primitives for async code
+        //
+        // `runtime.block_on(future)` bridges sync → async: it runs the
+        // future on the tokio runtime and blocks the current thread until
+        // the future completes (which for a server means "until killed").
+        #[cfg(feature = "proxy")]
+        Commands::Proxy { listen, upstream } => {
+            let rt = tokio::runtime::Runtime::new()
+                .context("Failed to create tokio async runtime")?;
+            rt.block_on(cctx::proxy::server::run(
+                cctx::proxy::config::ProxyConfig {
+                    listen_addr: listen,
+                    upstream_url: upstream,
+                },
+            ))
+        }
+
         Commands::Diff {
             before,
             after,

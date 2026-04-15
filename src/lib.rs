@@ -5,3 +5,10 @@ pub mod analyzer;
 pub mod formats;
 pub mod pipeline;
 pub mod strategies;
+
+// The proxy module is only compiled when the "proxy" feature flag is enabled.
+// #[cfg(feature = "...")] is Rust's conditional compilation — the compiler
+// skips this entire module (and its dependencies) when the feature is off.
+// This keeps the default binary small and fast to compile.
+#[cfg(feature = "proxy")]
+pub mod proxy;
