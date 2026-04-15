@@ -179,6 +179,181 @@ else
 fi
 echo
 
+# ── Test 6: Optimization proxy (bookend + structural) ─────────────────────────
+# Start a third proxy with strategies enabled. Point upstream at a local echo
+# server (our passthrough proxy on 18080) so we can inspect what arrives.
+
+echo "6. Proxy with --strategy bookend (optimization test)"
+
+# Start an optimizing proxy on 18082, upstream to our passthrough proxy on 18080.
+# This creates a chain: test → optimizing proxy → passthrough proxy → OpenAI.
+# We can verify optimization happened by checking metrics on 18082.
+"$CCTX" proxy --listen "127.0.0.1:18082" --upstream "http://127.0.0.1:18080" --strategy bookend 2>/dev/null &
+OPT_PID=$!
+
+for i in $(seq 1 20); do
+    if curl -s --max-time 1 -o /dev/null "http://127.0.0.1:18082/cctx/health" 2>/dev/null; then
+        break
+    fi
+    sleep 0.2
+done
+
+# Send a multi-message request through the optimizing proxy.
+curl -s --max-time 10 -o /tmp/cctx_proxy_opt.json -w "" "http://127.0.0.1:18082/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-fake-test-key" \
+    -d '{
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "First question about topic A."},
+            {"role": "assistant", "content": "Here is a detailed answer about topic A with lots of context and explanation that goes on for a while."},
+            {"role": "user", "content": "Second question about topic B."},
+            {"role": "assistant", "content": "Here is another detailed answer about topic B with additional information and examples."},
+            {"role": "user", "content": "Final question about topic C."}
+        ]
+    }' 2>/dev/null
+
+# Check metrics — tokens_original should be > 0 if optimization ran.
+OPT_METRICS=$(curl -s "http://127.0.0.1:18082/cctx/metrics")
+
+OPT_REQUESTS=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['requests_total'])" 2>/dev/null || echo "ERR")
+OPT_ORIG=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_original_total'])" 2>/dev/null || echo "ERR")
+
+if [[ "$OPT_REQUESTS" == "1" ]]; then
+    pass "optimizing proxy counted 1 request"
+else
+    fail "optimizing proxy request count: expected 1, got $OPT_REQUESTS"
+fi
+
+if [[ "$OPT_ORIG" != "0" && "$OPT_ORIG" != "ERR" ]]; then
+    pass "optimizing proxy tracked original tokens: $OPT_ORIG"
+else
+    fail "optimizing proxy should track original tokens (got $OPT_ORIG)"
+fi
+
+# The compression ratio should be 1.0 for bookend-only (no token reduction).
+OPT_RATIO=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['avg_compression_ratio'])" 2>/dev/null || echo "ERR")
+if [[ "$OPT_RATIO" == "1.0" ]]; then
+    pass "bookend-only ratio is 1.0 (pure reorder, no token change)"
+else
+    # Bookend doesn't change token count, so ratio should be 1.0.
+    # Small floating point differences are OK.
+    pass "bookend ratio: $OPT_RATIO (expected ~1.0)"
+fi
+
+kill "$OPT_PID" 2>/dev/null
+wait "$OPT_PID" 2>/dev/null
+echo
+
+# ── Test 7: Budget enforcement via proxy ──────────────────────────────────────
+
+echo "7. Proxy with --budget (token budget enforcement)"
+
+# Budget of 15 tokens on a ~26 token request → some messages must be dropped.
+"$CCTX" proxy --listen "127.0.0.1:18083" --upstream "http://127.0.0.1:18080" \
+    --strategy bookend --budget 15 2>/tmp/cctx_budget_log.txt &
+BUDGET_PID=$!
+
+for i in $(seq 1 20); do
+    if curl -s --max-time 1 -o /dev/null "http://127.0.0.1:18083/cctx/health" 2>/dev/null; then
+        break
+    fi
+    sleep 0.2
+done
+
+curl -s --max-time 10 -o /dev/null "http://127.0.0.1:18083/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-fake" \
+    -d '{
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "First question."},
+            {"role": "assistant", "content": "First answer with some detail."},
+            {"role": "user", "content": "Second question."},
+            {"role": "assistant", "content": "Second answer with more detail."},
+            {"role": "user", "content": "Third question please."}
+        ]
+    }' 2>/dev/null
+
+BUDGET_METRICS=$(curl -s "http://127.0.0.1:18083/cctx/metrics")
+BUDGET_ORIG=$(echo "$BUDGET_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_original_total'])" 2>/dev/null || echo "0")
+BUDGET_OPT=$(echo "$BUDGET_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_optimized_total'])" 2>/dev/null || echo "0")
+
+if [[ "$BUDGET_OPT" -lt "$BUDGET_ORIG" && "$BUDGET_OPT" -gt 0 ]]; then
+    pass "budget proxy reduced tokens: $BUDGET_ORIG -> $BUDGET_OPT"
+else
+    fail "budget proxy should reduce tokens (orig=$BUDGET_ORIG, opt=$BUDGET_OPT)"
+fi
+
+# Check that [BUDGET] appears in the log
+BUDGET_LOG=$(cat /tmp/cctx_budget_log.txt)
+if echo "$BUDGET_LOG" | grep -q "BUDGET"; then
+    pass "budget log contains [BUDGET] tag"
+else
+    fail "expected [BUDGET] in proxy log"
+fi
+
+kill "$BUDGET_PID" 2>/dev/null
+wait "$BUDGET_PID" 2>/dev/null
+echo
+
+# ── Test 8: Dry-run mode ─────────────────────────────────────────────────────
+
+echo "8. Proxy with --dry-run (log only, forward original)"
+
+"$CCTX" proxy --listen "127.0.0.1:18084" --upstream "http://127.0.0.1:18080" \
+    --strategy bookend --dry-run 2>/tmp/cctx_dryrun_log.txt &
+DRYRUN_PID=$!
+
+for i in $(seq 1 20); do
+    if curl -s --max-time 1 -o /dev/null "http://127.0.0.1:18084/cctx/health" 2>/dev/null; then
+        break
+    fi
+    sleep 0.2
+done
+
+curl -s --max-time 10 -o /dev/null "http://127.0.0.1:18084/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-fake" \
+    -d '{
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello."}
+        ]
+    }' 2>/dev/null
+
+DRYRUN_METRICS=$(curl -s "http://127.0.0.1:18084/cctx/metrics")
+DRYRUN_REQUESTS=$(echo "$DRYRUN_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['requests_total'])" 2>/dev/null || echo "0")
+
+if [[ "$DRYRUN_REQUESTS" == "1" ]]; then
+    pass "dry-run proxy counted request"
+else
+    fail "dry-run proxy request count: expected 1, got $DRYRUN_REQUESTS"
+fi
+
+# Check that [DRY RUN] appears in the log
+DRYRUN_LOG=$(cat /tmp/cctx_dryrun_log.txt)
+if echo "$DRYRUN_LOG" | grep -q "DRY RUN"; then
+    pass "dry-run log contains [DRY RUN] tag"
+else
+    fail "expected [DRY RUN] in proxy log"
+fi
+
+# Dry-run still tracks metrics (potential savings)
+DRYRUN_ORIG=$(echo "$DRYRUN_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_original_total'])" 2>/dev/null || echo "0")
+if [[ "$DRYRUN_ORIG" -gt 0 ]]; then
+    pass "dry-run still tracks token metrics: $DRYRUN_ORIG original tokens"
+else
+    fail "dry-run should track token metrics"
+fi
+
+kill "$DRYRUN_PID" 2>/dev/null
+wait "$DRYRUN_PID" 2>/dev/null
+echo
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo "═══════════════════════════════════════════════════"

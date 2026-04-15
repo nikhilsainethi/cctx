@@ -1,15 +1,4 @@
 //! In-memory metrics counters, safe for concurrent access.
-//!
-//! # Atomics
-//!
-//! `AtomicU64` is a 64-bit integer that can be read/written from multiple
-//! threads without a mutex. The hardware provides atomic load/store/add
-//! instructions, so there's no locking overhead. This is how high-performance
-//! servers count requests without contention.
-//!
-//! `Ordering::Relaxed` is the cheapest memory ordering — it guarantees the
-//! atomic operation itself is correct but doesn't enforce ordering relative
-//! to other memory operations. For simple counters this is sufficient.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -24,25 +13,33 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    /// Take a consistent snapshot for the /cctx/metrics endpoint.
     pub fn snapshot(&self) -> MetricsSnapshot {
+        let original = self.tokens_original_total.load(Ordering::Relaxed);
+        let optimized = self.tokens_optimized_total.load(Ordering::Relaxed);
+        let saved = original.saturating_sub(optimized);
+        let avg_ratio = if original > 0 {
+            optimized as f64 / original as f64
+        } else {
+            1.0
+        };
+
         MetricsSnapshot {
             requests_total: self.requests_total.load(Ordering::Relaxed),
-            tokens_original_total: self.tokens_original_total.load(Ordering::Relaxed),
-            tokens_optimized_total: self.tokens_optimized_total.load(Ordering::Relaxed),
-            tokens_saved_total: self
-                .tokens_original_total
-                .load(Ordering::Relaxed)
-                .saturating_sub(self.tokens_optimized_total.load(Ordering::Relaxed)),
+            tokens_original_total: original,
+            tokens_optimized_total: optimized,
+            tokens_saved_total: saved,
+            avg_compression_ratio: (avg_ratio * 1000.0).round() / 1000.0, // 3 decimal places
         }
     }
 }
 
-/// Serializable snapshot of the current metrics. Returned as JSON.
+/// Serializable snapshot of the current metrics.
 #[derive(Serialize)]
 pub struct MetricsSnapshot {
     pub requests_total: u64,
     pub tokens_original_total: u64,
     pub tokens_optimized_total: u64,
     pub tokens_saved_total: u64,
+    /// Average ratio: optimized / original. 1.0 = no compression, 0.7 = 30% saved.
+    pub avg_compression_ratio: f64,
 }

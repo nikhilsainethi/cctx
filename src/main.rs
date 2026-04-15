@@ -137,6 +137,18 @@ enum Commands {
         /// Upstream LLM API base URL.
         #[arg(long)]
         upstream: String,
+        /// Optimization strategies to apply. Repeat for chaining.
+        /// Without this, the proxy is a passthrough (no optimization).
+        #[arg(long)]
+        strategy: Vec<String>,
+        /// Token budget. After strategies run, if tokens still exceed this,
+        /// oldest non-critical messages are dropped.
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Dry-run: optimize and log savings, but forward the original
+        /// unmodified request. Safe for testing in production.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 
     /// Compare two context files side-by-side (before vs after).
@@ -239,13 +251,30 @@ fn main() -> Result<()> {
         // future on the tokio runtime and blocks the current thread until
         // the future completes (which for a server means "until killed").
         #[cfg(feature = "proxy")]
-        Commands::Proxy { listen, upstream } => {
+        Commands::Proxy {
+            listen,
+            upstream,
+            strategy,
+            budget,
+            dry_run,
+        } => {
+            for name in &strategy {
+                cctx::pipeline::make_strategy(name)?;
+            }
+            if let Some(b) = budget {
+                if b == 0 {
+                    anyhow::bail!("Budget must be a positive number");
+                }
+            }
             let rt = tokio::runtime::Runtime::new()
                 .context("Failed to create tokio async runtime")?;
             rt.block_on(cctx::proxy::server::run(
                 cctx::proxy::config::ProxyConfig {
                     listen_addr: listen,
                     upstream_url: upstream,
+                    strategy_names: strategy,
+                    budget,
+                    dry_run,
                 },
             ))
         }
