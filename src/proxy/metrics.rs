@@ -8,6 +8,7 @@ use serde::Serialize;
 #[derive(Default)]
 pub struct Metrics {
     pub requests_total: AtomicU64,
+    pub streaming_requests: AtomicU64,
     pub tokens_original_total: AtomicU64,
     pub tokens_optimized_total: AtomicU64,
 }
@@ -25,6 +26,7 @@ impl Metrics {
 
         MetricsSnapshot {
             requests_total: self.requests_total.load(Ordering::Relaxed),
+            streaming_requests: self.streaming_requests.load(Ordering::Relaxed),
             tokens_original_total: original,
             tokens_optimized_total: optimized,
             tokens_saved_total: saved,
@@ -37,6 +39,7 @@ impl Metrics {
 #[derive(Serialize)]
 pub struct MetricsSnapshot {
     pub requests_total: u64,
+    pub streaming_requests: u64,
     pub tokens_original_total: u64,
     pub tokens_optimized_total: u64,
     pub tokens_saved_total: u64,

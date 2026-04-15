@@ -1,37 +1,20 @@
 //! HTTP client that forwards requests to the upstream LLM API.
-//!
-//! # Async functions
-//!
-//! Every function marked `async fn` returns a *future* — a value that
-//! represents work that hasn't happened yet. The actual HTTP call only
-//! executes when the future is `.await`-ed inside a tokio task.
-//!
-//! This is fundamentally different from our sync CLI code:
-//!   - Sync: `let resp = client.post(url).send();` — blocks the thread
-//!   - Async: `let resp = client.post(url).send().await;` — yields the thread
-//!     back to tokio so it can run other tasks while waiting for the network
-//!
-//! A single tokio thread can handle thousands of concurrent requests because
-//! it never blocks — it just switches between futures as they become ready.
 
-use axum::http::{HeaderMap, HeaderName, StatusCode};
+use std::time::Duration;
+
+use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
 use reqwest::Client;
 
-/// Reusable HTTP client for upstream requests.
-///
-/// `Client` holds a connection pool internally — creating one per request
-/// (like we did with httpx in the Python example) is wasteful. A single
-/// Client shared via `Arc<AppState>` reuses TCP connections across requests.
 pub struct UpstreamClient {
     client: Client,
     base_url: String,
 }
 
 impl UpstreamClient {
-    pub fn new(base_url: &str) -> Self {
+    pub fn new(base_url: &str, timeout_secs: u64) -> Self {
         let client = Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(timeout_secs))
             .build()
             .unwrap_or_else(|_| Client::new());
         UpstreamClient {
@@ -40,70 +23,109 @@ impl UpstreamClient {
         }
     }
 
-    /// Forward a request to the upstream API and return the raw response.
-    ///
-    /// Preserves the original headers (especially Authorization) but strips
-    /// hop-by-hop headers that shouldn't be forwarded between proxies.
+    /// Forward a POST and buffer the entire response (non-streaming chat).
     pub async fn forward(
         &self,
         path: &str,
         headers: HeaderMap,
         body: Vec<u8>,
     ) -> Result<(StatusCode, HeaderMap, Vec<u8>), reqwest::Error> {
+        let resp = self.send_post(path, headers, body).await?;
+        let status =
+            StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+        let resp_headers = convert_response_headers(resp.headers());
+        let resp_body = resp.bytes().await?.to_vec();
+        Ok((status, resp_headers, resp_body))
+    }
+
+    /// Forward a POST and return the raw response for streaming.
+    pub async fn forward_streaming(
+        &self,
+        path: &str,
+        headers: HeaderMap,
+        body: Vec<u8>,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        self.send_post(path, headers, body).await
+    }
+
+    /// Forward any HTTP method to any path (catch-all passthrough).
+    pub async fn passthrough_request(
+        &self,
+        method: Method,
+        path: &str,
+        headers: HeaderMap,
+        body: Vec<u8>,
+    ) -> Result<reqwest::Response, reqwest::Error> {
         let url = format!("{}{}", self.base_url, path);
+        let fwd_headers = strip_hop_by_hop(headers);
 
-        // ── Build forwarded headers ───────────────────────────────────────
-        // Clone the incoming headers and remove hop-by-hop headers.
-        // These are specific to the client↔proxy connection, not proxy↔upstream.
-        let mut fwd_headers = headers;
-        let hop_by_hop: &[HeaderName] = &[
-            HeaderName::from_static("host"),
-            HeaderName::from_static("content-length"),
-            HeaderName::from_static("transfer-encoding"),
-            HeaderName::from_static("connection"),
-        ];
-        for h in hop_by_hop {
-            fwd_headers.remove(h);
-        }
+        // Convert http::Method to reqwest::Method via string.
+        let reqwest_method = reqwest::Method::from_bytes(method.as_str().as_bytes())
+            .unwrap_or(reqwest::Method::GET);
 
-        // ── Send to upstream ──────────────────────────────────────────────
-        let resp = self
-            .client
+        self.client
+            .request(reqwest_method, &url)
+            .headers(fwd_headers)
+            .body(body)
+            .send()
+            .await
+    }
+
+    async fn send_post(
+        &self,
+        path: &str,
+        headers: HeaderMap,
+        body: Vec<u8>,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        let url = format!("{}{}", self.base_url, path);
+        let fwd_headers = strip_hop_by_hop(headers);
+        self.client
             .post(&url)
             .headers(fwd_headers)
             .body(body)
             .send()
-            .await?;
-
-        // ── Collect response ──────────────────────────────────────────────
-        let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-        let resp_headers = convert_headers(resp.headers());
-        let resp_body = resp.bytes().await?.to_vec();
-
-        Ok((status, resp_headers, resp_body))
+            .await
     }
 }
 
-/// Convert reqwest's HeaderMap to axum's HeaderMap.
-///
-/// Both use the `http` crate's HeaderMap under the hood, but reqwest
-/// re-exports its own version. We iterate and rebuild to avoid version
-/// mismatch issues between the `http` crate versions.
-fn convert_headers(src: &reqwest::header::HeaderMap) -> HeaderMap {
+fn strip_hop_by_hop(mut headers: HeaderMap) -> HeaderMap {
+    let remove: &[HeaderName] = &[
+        HeaderName::from_static("host"),
+        HeaderName::from_static("content-length"),
+        HeaderName::from_static("transfer-encoding"),
+        HeaderName::from_static("connection"),
+    ];
+    for h in remove {
+        headers.remove(h);
+    }
+    headers
+}
+
+fn convert_response_headers(src: &reqwest::header::HeaderMap) -> HeaderMap {
     let mut dst = HeaderMap::new();
     for (name, value) in src.iter() {
-        // Skip hop-by-hop headers from the upstream response.
         if matches!(
             name.as_str(),
             "transfer-encoding" | "connection" | "keep-alive"
         ) {
             continue;
         }
-        if let Ok(name) = HeaderName::from_bytes(name.as_str().as_bytes()) {
-            if let Ok(val) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
-                dst.insert(name, val);
+        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes()) {
+            if let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
+                dst.insert(n, v);
             }
         }
     }
     dst
+}
+
+/// Classify a reqwest error for appropriate HTTP status codes.
+pub fn classify_error(e: &reqwest::Error) -> (StatusCode, &'static str) {
+    if e.is_timeout() {
+        (StatusCode::GATEWAY_TIMEOUT, "upstream_timeout")
+    } else if e.is_connect() {
+        (StatusCode::BAD_GATEWAY, "upstream_unavailable")
+    } else {
+        (StatusCode::BAD_GATEWAY, "upstream_error")
+    }
 }

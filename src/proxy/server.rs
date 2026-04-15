@@ -13,7 +13,6 @@ use super::handler::{self, AppState};
 use super::metrics::Metrics;
 use super::upstream::UpstreamClient;
 
-/// Build the router and start the server.
 pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let pipeline_config = Arc::new(PipelineConfig {
         query: None,
@@ -36,7 +35,7 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     };
 
     let state = Arc::new(AppState {
-        upstream: UpstreamClient::new(&config.upstream_url),
+        upstream: UpstreamClient::new(&config.upstream_url, config.timeout_secs),
         metrics: Metrics::default(),
         strategy_names: config.strategy_names,
         pipeline_config,
@@ -48,6 +47,9 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         .route("/v1/chat/completions", post(handler::chat_completions))
         .route("/cctx/health", get(handler::health))
         .route("/cctx/metrics", get(handler::get_metrics))
+        // Catch-all: forward any other path to upstream unchanged.
+        // This makes cctx a transparent proxy for ALL OpenAI endpoints.
+        .fallback(handler::catchall)
         .with_state(state);
 
     // ── Startup banner ────────────────────────────────────────────────────
@@ -59,6 +61,7 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     eprintln!("│  {:<width$}│", format!("Upstream:    {}", config.upstream_url), width = w - 2);
     eprintln!("│  {:<width$}│", format!("Strategies:  {}", strategy_label), width = w - 2);
     eprintln!("│  {:<width$}│", format!("Budget:      {}", budget_label), width = w - 2);
+    eprintln!("│  {:<width$}│", format!("Timeout:     {}s", config.timeout_secs), width = w - 2);
     eprintln!("│  {:<width$}│", format!("Mode:        {}", mode_label), width = w - 2);
     eprintln!("╰{}╯", "─".repeat(w));
     eprintln!();

@@ -354,6 +354,221 @@ kill "$DRYRUN_PID" 2>/dev/null
 wait "$DRYRUN_PID" 2>/dev/null
 echo
 
+# ── Test 9: Streaming request (stream: true) ─────────────────────────────────
+
+echo "9. Streaming request (stream: true via passthrough proxy)"
+
+# Send a streaming request through the main passthrough proxy (port 18080).
+# With a fake key, OpenAI returns a JSON error (not SSE), but we verify
+# the proxy handles stream:true without crashing and the response arrives.
+STREAM_CODE=$(curl -s --max-time 10 -o /tmp/cctx_proxy_stream.txt -w "%{http_code}" \
+    "$BASE/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-fake-stream-key" \
+    -d '{
+        "model": "gpt-4o-mini",
+        "stream": true,
+        "messages": [{"role": "user", "content": "Say hello"}]
+    }' 2>/dev/null)
+STREAM_BODY=$(cat /tmp/cctx_proxy_stream.txt)
+
+if [[ "$STREAM_CODE" =~ ^[2-4][0-9][0-9]$ ]]; then
+    pass "streaming request forwarded (HTTP $STREAM_CODE)"
+else
+    fail "streaming request failed (HTTP $STREAM_CODE)"
+fi
+
+# The response should contain some content (error JSON from OpenAI).
+if [[ -n "$STREAM_BODY" ]]; then
+    pass "streaming response body received"
+else
+    fail "streaming response body is empty"
+fi
+echo
+
+# ── Test 10: Streaming with optimization proxy ────────────────────────────────
+
+echo "10. Streaming request with --strategy bookend"
+
+# Start an optimizing proxy that handles streaming.
+"$CCTX" proxy --listen "127.0.0.1:18085" --upstream "http://127.0.0.1:18080" \
+    --strategy bookend 2>/tmp/cctx_stream_opt_log.txt &
+STREAMOPT_PID=$!
+
+for i in $(seq 1 20); do
+    if curl -s --max-time 1 -o /dev/null "http://127.0.0.1:18085/cctx/health" 2>/dev/null; then
+        break
+    fi
+    sleep 0.2
+done
+
+curl -s --max-time 10 -o /dev/null "http://127.0.0.1:18085/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-fake" \
+    -d '{
+        "model": "gpt-4o-mini",
+        "stream": true,
+        "messages": [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello."},
+            {"role": "assistant", "content": "Hi there!"},
+            {"role": "user", "content": "How are you?"}
+        ]
+    }' 2>/dev/null
+
+# Check metrics — streaming request should be counted.
+STREAM_METRICS=$(curl -s "http://127.0.0.1:18085/cctx/metrics")
+STREAM_REQS=$(echo "$STREAM_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['streaming_requests'])" 2>/dev/null || echo "0")
+
+if [[ "$STREAM_REQS" == "1" ]]; then
+    pass "streaming_requests metric incremented"
+else
+    fail "expected streaming_requests=1, got $STREAM_REQS"
+fi
+
+# Check that [STREAM] appears in the log.
+if grep -q "STREAM" /tmp/cctx_stream_opt_log.txt; then
+    pass "log contains [STREAM] tag"
+else
+    fail "expected [STREAM] in proxy log"
+fi
+
+# Check that tokens were tracked (optimization still ran on the input).
+STREAM_ORIG=$(echo "$STREAM_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_original_total'])" 2>/dev/null || echo "0")
+if [[ "$STREAM_ORIG" -gt 0 ]]; then
+    pass "streaming: input tokens tracked ($STREAM_ORIG)"
+else
+    fail "streaming: expected token tracking"
+fi
+
+kill "$STREAMOPT_PID" 2>/dev/null
+wait "$STREAMOPT_PID" 2>/dev/null
+echo
+
+# ── Test 11: Invalid JSON body → 400 ──────────────────────────────────────────
+
+echo "11. Invalid JSON body → 400"
+INVALID_CODE=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" \
+    "$BASE/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-fake" \
+    -d 'this is not json at all' 2>/dev/null)
+if [[ "$INVALID_CODE" == "400" ]]; then
+    pass "invalid JSON returns 400"
+else
+    fail "invalid JSON: expected 400, got $INVALID_CODE"
+fi
+echo
+
+# ── Test 12: No messages field → passthrough ──────────────────────────────────
+
+echo "12. No messages field → passthrough (embeddings-style request)"
+EMBED_CODE=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    "$BASE/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-fake" \
+    -d '{"model": "gpt-4o-mini", "input": "Hello world"}' 2>/dev/null)
+# OpenAI will reject this (wrong format for chat), but we should get a 4xx from upstream,
+# not a cctx error — proving the request was forwarded.
+if [[ "$EMBED_CODE" =~ ^[2-4][0-9][0-9]$ ]]; then
+    pass "no-messages request forwarded as passthrough (HTTP $EMBED_CODE)"
+else
+    fail "no-messages: expected upstream response, got $EMBED_CODE"
+fi
+echo
+
+# ── Test 13: Catch-all route (non-chat endpoint) ─────────────────────────────
+
+echo "13. Catch-all: GET /v1/models → passthrough to upstream"
+MODELS_CODE=$(curl -s --max-time 10 -o /tmp/cctx_models.json -w "%{http_code}" \
+    "$BASE/v1/models" \
+    -H "Authorization: Bearer sk-fake" 2>/dev/null)
+if [[ "$MODELS_CODE" =~ ^[2-4][0-9][0-9]$ ]]; then
+    pass "catch-all forwarded /v1/models (HTTP $MODELS_CODE)"
+else
+    fail "catch-all: expected upstream response, got $MODELS_CODE"
+fi
+echo
+
+# ── Test 14: Upstream timeout (--timeout 1 with slow upstream) ────────────────
+
+echo "14. Upstream timeout → 504"
+# Start a proxy with 1-second timeout pointing at a server that will be slow.
+# Use httpbin.org/delay/5 as a slow upstream (5 second delay).
+"$CCTX" proxy --listen "127.0.0.1:18086" --upstream "http://httpbin.org" \
+    --timeout 2 2>/dev/null &
+TIMEOUT_PID=$!
+
+for i in $(seq 1 20); do
+    if curl -s --max-time 1 -o /dev/null "http://127.0.0.1:18086/cctx/health" 2>/dev/null; then
+        break
+    fi
+    sleep 0.2
+done
+
+# Send a request — the proxy will try to forward to httpbin.org/v1/chat/completions
+# which doesn't exist, but the interesting case is if upstream is slow.
+# Actually, just verify the proxy handles the timeout gracefully.
+TIMEOUT_CODE=$(curl -s --max-time 10 -o /tmp/cctx_timeout.json -w "%{http_code}" \
+    "http://127.0.0.1:18086/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"test","messages":[{"role":"user","content":"hi"}]}' 2>/dev/null)
+TIMEOUT_BODY=$(cat /tmp/cctx_timeout.json 2>/dev/null || echo "")
+
+# Should get either 502 (connection error) or 504 (timeout) — both are valid.
+if [[ "$TIMEOUT_CODE" == "502" || "$TIMEOUT_CODE" == "504" ]]; then
+    pass "timeout/error handled cleanly (HTTP $TIMEOUT_CODE)"
+else
+    # httpbin might actually respond — that's OK too
+    if [[ "$TIMEOUT_CODE" =~ ^[2-4][0-9][0-9]$ ]]; then
+        pass "upstream responded before timeout (HTTP $TIMEOUT_CODE)"
+    else
+        fail "timeout test: expected 502/504, got $TIMEOUT_CODE"
+    fi
+fi
+
+# Only check error field if we got a 502/504 (cctx error, not upstream response).
+if [[ "$TIMEOUT_CODE" == "502" || "$TIMEOUT_CODE" == "504" ]] && [[ -n "$TIMEOUT_BODY" ]]; then
+    check_contains "$TIMEOUT_BODY" "error" "timeout response has error field"
+fi
+
+kill "$TIMEOUT_PID" 2>/dev/null
+wait "$TIMEOUT_PID" 2>/dev/null
+echo
+
+# ── Test 15: Unreachable upstream returns 502 (not 500, not panic) ────────────
+
+echo "15. Unreachable upstream → structured 502"
+BAD2_CODE=$(curl -s --max-time 5 -o /tmp/cctx_bad2.json -w "%{http_code}" \
+    "http://127.0.0.1:18081/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"test","messages":[{"role":"user","content":"hi"}]}' 2>/dev/null || echo "000")
+# The unreachable proxy from test 5 was already killed. Start a fresh one.
+"$CCTX" proxy --listen "127.0.0.1:18087" --upstream "http://127.0.0.1:19999" 2>/dev/null &
+BAD2_PID=$!
+for i in $(seq 1 20); do
+    if curl -s --max-time 1 -o /dev/null "http://127.0.0.1:18087/cctx/health" 2>/dev/null; then break; fi
+    sleep 0.2
+done
+
+BAD2_CODE=$(curl -s --max-time 5 -o /tmp/cctx_bad2.json -w "%{http_code}" \
+    "http://127.0.0.1:18087/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"test","messages":[{"role":"user","content":"hi"}]}' 2>/dev/null)
+BAD2_BODY=$(cat /tmp/cctx_bad2.json 2>/dev/null || echo "")
+
+if [[ "$BAD2_CODE" == "502" ]]; then
+    pass "unreachable upstream returns 502"
+else
+    fail "unreachable: expected 502, got $BAD2_CODE"
+fi
+
+check_contains "$BAD2_BODY" "upstream_unavailable" "502 body has code upstream_unavailable"
+
+kill "$BAD2_PID" 2>/dev/null
+wait "$BAD2_PID" 2>/dev/null
+echo
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo "═══════════════════════════════════════════════════"

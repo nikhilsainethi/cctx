@@ -149,6 +149,9 @@ enum Commands {
         /// unmodified request. Safe for testing in production.
         #[arg(long, default_value_t = false)]
         dry_run: bool,
+        /// Upstream request timeout in seconds.
+        #[arg(long, default_value_t = 120)]
+        timeout: u64,
     },
 
     /// Compare two context files side-by-side (before vs after).
@@ -257,6 +260,7 @@ fn main() -> Result<()> {
             strategy,
             budget,
             dry_run,
+            timeout,
         } => {
             for name in &strategy {
                 cctx::pipeline::make_strategy(name)?;
@@ -275,6 +279,7 @@ fn main() -> Result<()> {
                     strategy_names: strategy,
                     budget,
                     dry_run,
+                    timeout_secs: timeout,
                 },
             ))
         }
