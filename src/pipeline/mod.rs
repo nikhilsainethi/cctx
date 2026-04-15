@@ -1,51 +1,35 @@
 //! Strategy pipeline — composable, ordered strategy execution.
-//!
-//! The pipeline module defines:
-//!   - `Strategy` trait: common interface for all optimization strategies
-//!   - `PipelineConfig`: shared configuration (query, tokenizer)
-//!   - Wrapper structs that adapt each strategy to the trait
-//!   - Preset definitions (safe, balanced, aggressive)
 
 pub mod executor;
+
+use std::sync::Arc;
 
 use anyhow::Result;
 
 use crate::core::context::{Chunk, Context};
 use crate::core::tokenizer::Tokenizer;
+use crate::embeddings::EmbeddingProvider;
 use crate::strategies::{bookend, dedup, structural};
 
 // ── Strategy trait ────────────────────────────────────────────────────────────
-//
-// `dyn Strategy` is a *trait object* — Rust's runtime polymorphism.
-// A `Box<dyn Strategy>` is a fat pointer: one pointer to the data, one to a
-// vtable of function pointers (name, apply). This lets us store different
-// strategy types in the same Vec without generics.
 
-/// Common interface for all optimization strategies.
 pub trait Strategy {
-    /// Human-readable name shown in pipeline logs.
     fn name(&self) -> &str;
-
-    /// Transform a context: reorder, compress, or deduplicate chunks.
-    /// Returns the new chunk list. The pipeline rebuilds the Context.
     fn apply(&self, context: &Context, config: &PipelineConfig) -> Result<Vec<Chunk>>;
 }
 
 // ── Pipeline config ───────────────────────────────────────────────────────────
 
-/// Shared configuration passed to every strategy in the pipeline.
 pub struct PipelineConfig {
-    /// Optional query for TF-IDF scoring / markdown collapse.
     pub query: Option<String>,
-    /// Shared tokenizer for token recounting after compression.
     pub tokenizer: Tokenizer,
+    /// Embedding provider for semantic dedup. None = fallback to exact-match.
+    pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    /// Cosine similarity threshold for semantic dedup (default 0.85).
+    pub dedup_threshold: f64,
 }
 
 // ── Strategy wrappers ─────────────────────────────────────────────────────────
-//
-// Each wrapper is a zero-size struct that implements Strategy by delegating
-// to the existing functions in src/strategies/. This keeps the strategy
-// algorithms independent of the trait system.
 
 pub struct BookendStrategy;
 
@@ -79,14 +63,24 @@ impl Strategy for DeduplicateStrategy {
     fn name(&self) -> &str {
         "dedup"
     }
-    fn apply(&self, context: &Context, _config: &PipelineConfig) -> Result<Vec<Chunk>> {
-        Ok(dedup::apply(context))
+    fn apply(&self, context: &Context, config: &PipelineConfig) -> Result<Vec<Chunk>> {
+        // If an embedding provider is configured, use semantic dedup.
+        // Otherwise, fall back to exact-match dedup (no external dependencies).
+        if let Some(ref provider) = config.embedding_provider {
+            dedup::apply_semantic(
+                context,
+                provider.as_ref(),
+                config.dedup_threshold,
+                &config.tokenizer,
+            )
+        } else {
+            Ok(dedup::apply(context))
+        }
     }
 }
 
 // ── Factory + presets ─────────────────────────────────────────────────────────
 
-/// Build a boxed Strategy from a name string (used by --strategy flag).
 pub fn make_strategy(name: &str) -> Result<Box<dyn Strategy>> {
     match name {
         "bookend" => Ok(Box::new(BookendStrategy)),
@@ -99,7 +93,6 @@ pub fn make_strategy(name: &str) -> Result<Box<dyn Strategy>> {
     }
 }
 
-/// Expand a preset name into an ordered list of strategy names.
 pub fn preset_strategies(preset: &str) -> Result<Vec<&'static str>> {
     match preset {
         "safe" => Ok(vec!["bookend"]),

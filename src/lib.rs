@@ -2,6 +2,7 @@
 // `pub mod` makes a module public — without `pub`, code in other crates can't see it.
 pub mod core;
 pub mod analyzer;
+pub mod embeddings;
 pub mod formats;
 pub mod pipeline;
 pub mod strategies;

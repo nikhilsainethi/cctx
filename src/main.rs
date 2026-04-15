@@ -92,6 +92,13 @@ enum Commands {
         /// Write output to a file instead of stdout.
         #[arg(long)]
         output: Option<PathBuf>,
+        /// Embedding provider for semantic dedup: ollama or openai.
+        /// Requires: cargo build --features embeddings
+        #[arg(long)]
+        embedding_provider: Option<String>,
+        /// Cosine similarity threshold for semantic dedup (0.0-1.0).
+        #[arg(long, default_value_t = 0.85)]
+        dedup_threshold: f64,
     },
 
     /// Compress context to fit a hard token budget.
@@ -152,6 +159,12 @@ enum Commands {
         /// Upstream request timeout in seconds.
         #[arg(long, default_value_t = 120)]
         timeout: u64,
+        /// Embedding provider for semantic dedup: ollama or openai.
+        #[arg(long)]
+        embedding_provider: Option<String>,
+        /// Cosine similarity threshold for semantic dedup.
+        #[arg(long, default_value_t = 0.85)]
+        dedup_threshold: f64,
     },
 
     /// Compare two context files side-by-side (before vs after).
@@ -194,10 +207,13 @@ fn main() -> Result<()> {
             query,
             budget,
             output,
+            embedding_provider,
+            dedup_threshold,
         } => {
             let raw = read_input(&file)?;
             let ctx = build_context(&raw, input_format.to_lib())?;
-            cmd_optimize(ctx, strategy, preset, query, budget, &output)
+            let provider = make_embedding_provider(embedding_provider.as_deref())?;
+            cmd_optimize(ctx, strategy, preset, query, budget, &output, provider, dedup_threshold)
         }
         Commands::Compress {
             file,
@@ -261,6 +277,8 @@ fn main() -> Result<()> {
             budget,
             dry_run,
             timeout,
+            embedding_provider,
+            dedup_threshold,
         } => {
             for name in &strategy {
                 cctx::pipeline::make_strategy(name)?;
@@ -280,6 +298,8 @@ fn main() -> Result<()> {
                     budget,
                     dry_run,
                     timeout_secs: timeout,
+                    embedding_provider,
+                    dedup_threshold,
                 },
             ))
         }
@@ -348,6 +368,8 @@ fn cmd_optimize(
     query: Option<String>,
     budget: Option<usize>,
     output: &Option<PathBuf>,
+    embedding_provider: Option<std::sync::Arc<dyn cctx::embeddings::EmbeddingProvider>>,
+    dedup_threshold: f64,
 ) -> Result<()> {
     if context.chunk_count() == 0 {
         eprintln!("No context to optimize");
@@ -377,6 +399,8 @@ fn cmd_optimize(
     let config = PipelineConfig {
         query,
         tokenizer: Tokenizer::new().context("Failed to initialize tokenizer")?,
+        embedding_provider,
+        dedup_threshold,
     };
     let mut pipeline = Pipeline::new(config);
     for name in &names {
@@ -418,6 +442,8 @@ fn cmd_compress(
     let config = PipelineConfig {
         query,
         tokenizer: Tokenizer::new().context("Failed to initialize tokenizer")?,
+        embedding_provider: None,
+        dedup_threshold: 0.85,
     };
     let mut pipeline = Pipeline::new(config);
     pipeline.add(make_strategy("structural")?);
@@ -845,6 +871,44 @@ fn build_context(raw: &str, input_format: Option<InputFormat>) -> Result<AppCont
     let total_tokens: usize = chunks.iter().map(|c| c.token_count).sum();
     assign_attention_zones(&mut chunks, total_tokens);
     Ok(AppContext::new(chunks))
+}
+
+/// Create an embedding provider from the CLI flag.
+/// Returns None if no provider specified (dedup falls back to exact-match).
+fn make_embedding_provider(
+    name: Option<&str>,
+) -> Result<Option<std::sync::Arc<dyn cctx::embeddings::EmbeddingProvider>>> {
+    match name {
+        None => Ok(None),
+        // TF-IDF is always available — no external API needed.
+        Some("tfidf") => Ok(Some(std::sync::Arc::new(
+            cctx::embeddings::tfidf::TfIdfEmbedder,
+        ))),
+        #[cfg(feature = "embeddings")]
+        Some("ollama") => Ok(Some(std::sync::Arc::new(
+            cctx::embeddings::ollama::OllamaEmbedder::default_local(),
+        ))),
+        #[cfg(feature = "embeddings")]
+        Some("openai") => {
+            let embedder = cctx::embeddings::openai::OpenAIEmbedder::from_env()?;
+            Ok(Some(std::sync::Arc::new(embedder)))
+        }
+        #[cfg(not(feature = "embeddings"))]
+        Some(name) if name == "ollama" || name == "openai" => {
+            anyhow::bail!(
+                "Provider '{}' requires --features embeddings.\n\
+                 Rebuild with: cargo build --features embeddings\n\
+                 Or use --embedding-provider tfidf (no external deps)",
+                name
+            );
+        }
+        Some(other) => {
+            anyhow::bail!(
+                "Unknown embedding provider '{}'. Supported: tfidf, ollama, openai",
+                other
+            );
+        }
+    }
 }
 
 fn default_relevance(role: &str, index: usize, total: usize) -> f64 {

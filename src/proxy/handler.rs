@@ -446,7 +446,12 @@ fn run_pipeline_sync(
     let optimized = if strategy_names.is_empty() {
         context
     } else {
-        let pc = PipelineConfig { query: config.query.clone(), tokenizer: Tokenizer::new()? };
+        let pc = PipelineConfig {
+            query: config.query.clone(),
+            tokenizer: Tokenizer::new()?,
+            embedding_provider: config.embedding_provider.clone(),
+            dedup_threshold: config.dedup_threshold,
+        };
         let mut pipeline = Pipeline::new(pc);
         for name in strategy_names { pipeline.add(make_strategy(name)?); }
         pipeline.run(context)?

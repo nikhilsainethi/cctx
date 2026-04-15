@@ -14,9 +14,14 @@ use super::metrics::Metrics;
 use super::upstream::UpstreamClient;
 
 pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
+    // ── Build embedding provider from config name ─────────────────────────
+    let embedding_provider = build_embedding_provider(config.embedding_provider.as_deref())?;
+
     let pipeline_config = Arc::new(PipelineConfig {
         query: None,
         tokenizer: Tokenizer::new()?,
+        embedding_provider,
+        dedup_threshold: config.dedup_threshold,
     });
 
     let strategy_label = if config.strategy_names.is_empty() {
@@ -75,4 +80,28 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+fn build_embedding_provider(
+    name: Option<&str>,
+) -> anyhow::Result<Option<Arc<dyn crate::embeddings::EmbeddingProvider>>> {
+    match name {
+        None => Ok(None),
+        Some("tfidf") => Ok(Some(Arc::new(
+            crate::embeddings::tfidf::TfIdfEmbedder,
+        ))),
+        #[cfg(feature = "embeddings")]
+        Some("ollama") => Ok(Some(Arc::new(
+            crate::embeddings::ollama::OllamaEmbedder::default_local(),
+        ))),
+        #[cfg(feature = "embeddings")]
+        Some("openai") => Ok(Some(Arc::new(
+            crate::embeddings::openai::OpenAIEmbedder::from_env()?,
+        ))),
+        #[cfg(not(feature = "embeddings"))]
+        Some(name) if name == "ollama" || name == "openai" => {
+            anyhow::bail!("Provider '{}' requires --features embeddings", name)
+        }
+        Some(other) => anyhow::bail!("Unknown embedding provider: {}", other),
+    }
 }

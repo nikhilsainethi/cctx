@@ -45,7 +45,9 @@ tokio = { version = "1", features = ["full"], optional = true }
 # reqwest: high-level async HTTP client for forwarding to the upstream LLM API.
 # rustls-tls: pure-Rust TLS — no system OpenSSL dependency.
 # stream: enables .bytes_stream() for SSE/streaming response forwarding.
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false, optional = true }
+# blocking: enables reqwest::blocking::Client for sync embedding HTTP calls.
+# stream: enables .bytes_stream() for SSE/streaming response forwarding.
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream", "blocking"], default-features = false, optional = true }
 
 # tower: middleware framework. axum is built on tower's Service trait.
 tower = { version = "0.5", optional = true }
@@ -61,6 +63,10 @@ tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
 
 [features]
 default = []
+# Embedding providers (Ollama, OpenAI) for semantic deduplication.
+# Adds reqwest::blocking for sync HTTP calls to embedding APIs.
+embeddings = ["dep:reqwest"]
+# OpenAI-compatible proxy server with context optimization.
 proxy = ["dep:axum", "dep:tokio", "dep:reqwest", "dep:tower", "dep:tower-http"]
 
 [dev-dependencies]

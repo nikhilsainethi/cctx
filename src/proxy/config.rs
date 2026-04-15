@@ -7,6 +7,9 @@ pub struct ProxyConfig {
     pub strategy_names: Vec<String>,
     pub budget: Option<usize>,
     pub dry_run: bool,
-    /// Upstream request timeout in seconds.
     pub timeout_secs: u64,
+    /// Embedding provider name: "ollama", "openai", or None.
+    pub embedding_provider: Option<String>,
+    /// Cosine similarity threshold for semantic dedup.
+    pub dedup_threshold: f64,
 }
