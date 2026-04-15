@@ -144,9 +144,7 @@ pub fn analyze(context: &Context, model: &str) -> HealthReport {
     // ── Recommendations ───────────────────────────────────────────────────
     let mut recs = Vec::new();
     if dz_score < 80 {
-        recs.push(
-            "Run `cctx optimize --strategy bookend` to fix dead zone placement".to_string(),
-        );
+        recs.push("Run `cctx optimize --strategy bookend` to fix dead zone placement".to_string());
     }
     if dup_score < 90 && dup_tokens > 0 {
         recs.push(format!(

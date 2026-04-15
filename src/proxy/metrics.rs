@@ -127,9 +127,7 @@ impl Metrics {
         }
 
         // Per-strategy counts.
-        if was_optimized
-            && let Ok(mut map) = self.strategies_applied.lock()
-        {
+        if was_optimized && let Ok(mut map) = self.strategies_applied.lock() {
             for name in strategies {
                 *map.entry(name.clone()).or_default() += 1;
             }
