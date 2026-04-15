@@ -8,6 +8,8 @@
 
 A Rust CLI that analyzes, optimizes, and compresses LLM context at the application layer. Works with any provider (OpenAI, Anthropic, Ollama, local models) and any framework. Zero dependencies beyond the binary.
 
+![cctx demo](demo.gif)
+
 ## The Problem
 
 LLMs advertise massive context windows but can't use them effectively. Stanford's *Lost in the Middle* paper (Liu et al., TACL 2024) showed a **30% accuracy drop** for information placed in the middle of the context window — a structural property of how transformers attend to position, not a bug. Zylos Research found that **65% of enterprise AI agent failures** in 2025 were caused by context drift or memory loss during multi-step reasoning. And it gets worse: beyond ~30K tokens, performance degrades regardless of the advertised window size.

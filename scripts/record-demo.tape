@@ -12,7 +12,7 @@ Set FontSize 14
 Set Width 1200
 Set Height 800
 Set Padding 20
-Set Theme "Monokai"
+Set Theme "Molokai"
 Set TypingSpeed 30ms
 
 # Build first (not recorded)
