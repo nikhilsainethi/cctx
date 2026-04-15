@@ -15,6 +15,7 @@
 //!   cargo build --features proxy
 
 pub mod config;
+pub mod dashboard;
 pub mod handler;
 pub mod metrics;
 pub mod server;

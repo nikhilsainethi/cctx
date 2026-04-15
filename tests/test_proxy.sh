@@ -98,8 +98,8 @@ echo
 
 echo "2. GET /cctx/metrics (before any requests)"
 METRICS=$(curl -s "$BASE/cctx/metrics")
-check_json_field "$METRICS" "['requests_total']" "0" "requests_total starts at 0"
-check_json_field "$METRICS" "['tokens_saved_total']" "0" "tokens_saved_total starts at 0"
+check_json_field "$METRICS" "['requests']['total']" "0" "requests.total starts at 0"
+check_json_field "$METRICS" "['tokens']['saved']" "0" "tokens.saved starts at 0"
 echo
 
 # ── Test 3: Chat completions passthrough (fake key → 401 from OpenAI) ────────
@@ -134,7 +134,7 @@ echo
 
 echo "4. GET /cctx/metrics (after 1 request)"
 METRICS=$(curl -s "$BASE/cctx/metrics")
-check_json_field "$METRICS" "['requests_total']" "1" "requests_total incremented to 1"
+check_json_field "$METRICS" "['requests']['total']" "1" "requests.total incremented to 1"
 echo
 
 # ── Test 5: Unreachable upstream ──────────────────────────────────────────────
@@ -217,8 +217,8 @@ curl -s --max-time 10 -o /tmp/cctx_proxy_opt.json -w "" "http://127.0.0.1:18082/
 # Check metrics — tokens_original should be > 0 if optimization ran.
 OPT_METRICS=$(curl -s "http://127.0.0.1:18082/cctx/metrics")
 
-OPT_REQUESTS=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['requests_total'])" 2>/dev/null || echo "ERR")
-OPT_ORIG=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_original_total'])" 2>/dev/null || echo "ERR")
+OPT_REQUESTS=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['requests']['total'])" 2>/dev/null || echo "ERR")
+OPT_ORIG=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens']['input_original'])" 2>/dev/null || echo "ERR")
 
 if [[ "$OPT_REQUESTS" == "1" ]]; then
     pass "optimizing proxy counted 1 request"
@@ -232,14 +232,19 @@ else
     fail "optimizing proxy should track original tokens (got $OPT_ORIG)"
 fi
 
-# The compression ratio should be 1.0 for bookend-only (no token reduction).
-OPT_RATIO=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['avg_compression_ratio'])" 2>/dev/null || echo "ERR")
+OPT_RATIO=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens']['compression_ratio'])" 2>/dev/null || echo "ERR")
 if [[ "$OPT_RATIO" == "1.0" ]]; then
     pass "bookend-only ratio is 1.0 (pure reorder, no token change)"
 else
-    # Bookend doesn't change token count, so ratio should be 1.0.
-    # Small floating point differences are OK.
     pass "bookend ratio: $OPT_RATIO (expected ~1.0)"
+fi
+
+# Verify strategies map is populated.
+OPT_STRATS=$(echo "$OPT_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['strategies'].get('bookend', 0))" 2>/dev/null || echo "0")
+if [[ "$OPT_STRATS" == "1" ]]; then
+    pass "strategies.bookend = 1"
+else
+    fail "expected strategies.bookend=1, got $OPT_STRATS"
 fi
 
 kill "$OPT_PID" 2>/dev/null
@@ -278,8 +283,8 @@ curl -s --max-time 10 -o /dev/null "http://127.0.0.1:18083/v1/chat/completions" 
     }' 2>/dev/null
 
 BUDGET_METRICS=$(curl -s "http://127.0.0.1:18083/cctx/metrics")
-BUDGET_ORIG=$(echo "$BUDGET_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_original_total'])" 2>/dev/null || echo "0")
-BUDGET_OPT=$(echo "$BUDGET_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_optimized_total'])" 2>/dev/null || echo "0")
+BUDGET_ORIG=$(echo "$BUDGET_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens']['input_original'])" 2>/dev/null || echo "0")
+BUDGET_OPT=$(echo "$BUDGET_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens']['input_optimized'])" 2>/dev/null || echo "0")
 
 if [[ "$BUDGET_OPT" -lt "$BUDGET_ORIG" && "$BUDGET_OPT" -gt 0 ]]; then
     pass "budget proxy reduced tokens: $BUDGET_ORIG -> $BUDGET_OPT"
@@ -326,7 +331,7 @@ curl -s --max-time 10 -o /dev/null "http://127.0.0.1:18084/v1/chat/completions" 
     }' 2>/dev/null
 
 DRYRUN_METRICS=$(curl -s "http://127.0.0.1:18084/cctx/metrics")
-DRYRUN_REQUESTS=$(echo "$DRYRUN_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['requests_total'])" 2>/dev/null || echo "0")
+DRYRUN_REQUESTS=$(echo "$DRYRUN_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['requests']['total'])" 2>/dev/null || echo "0")
 
 if [[ "$DRYRUN_REQUESTS" == "1" ]]; then
     pass "dry-run proxy counted request"
@@ -343,7 +348,7 @@ else
 fi
 
 # Dry-run still tracks metrics (potential savings)
-DRYRUN_ORIG=$(echo "$DRYRUN_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_original_total'])" 2>/dev/null || echo "0")
+DRYRUN_ORIG=$(echo "$DRYRUN_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens']['input_original'])" 2>/dev/null || echo "0")
 if [[ "$DRYRUN_ORIG" -gt 0 ]]; then
     pass "dry-run still tracks token metrics: $DRYRUN_ORIG original tokens"
 else
@@ -418,7 +423,7 @@ curl -s --max-time 10 -o /dev/null "http://127.0.0.1:18085/v1/chat/completions" 
 
 # Check metrics — streaming request should be counted.
 STREAM_METRICS=$(curl -s "http://127.0.0.1:18085/cctx/metrics")
-STREAM_REQS=$(echo "$STREAM_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['streaming_requests'])" 2>/dev/null || echo "0")
+STREAM_REQS=$(echo "$STREAM_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['requests']['streaming'])" 2>/dev/null || echo "0")
 
 if [[ "$STREAM_REQS" == "1" ]]; then
     pass "streaming_requests metric incremented"
@@ -434,7 +439,7 @@ else
 fi
 
 # Check that tokens were tracked (optimization still ran on the input).
-STREAM_ORIG=$(echo "$STREAM_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens_original_total'])" 2>/dev/null || echo "0")
+STREAM_ORIG=$(echo "$STREAM_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['tokens']['input_original'])" 2>/dev/null || echo "0")
 if [[ "$STREAM_ORIG" -gt 0 ]]; then
     pass "streaming: input tokens tracked ($STREAM_ORIG)"
 else
@@ -538,7 +543,66 @@ echo
 
 # ── Test 15: Unreachable upstream returns 502 (not 500, not panic) ────────────
 
-echo "15. Unreachable upstream → structured 502"
+echo "15. Metrics: uptime, cost, per-model, strategies, reset"
+
+# Use the optimizing proxy on port 18082 — send a request with a specific model.
+"$CCTX" proxy --listen "127.0.0.1:18088" --upstream "http://127.0.0.1:18080" \
+    --strategy bookend 2>/dev/null &
+METRICS_PID=$!
+for i in $(seq 1 20); do
+    if curl -s --max-time 1 -o /dev/null "http://127.0.0.1:18088/cctx/health" 2>/dev/null; then break; fi
+    sleep 0.2
+done
+
+# Send request with model=gpt-4o-mini
+curl -s --max-time 10 -o /dev/null "http://127.0.0.1:18088/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-fake" \
+    -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}' 2>/dev/null
+
+FULL_METRICS=$(curl -s "http://127.0.0.1:18088/cctx/metrics")
+
+# Check uptime > 0
+UPTIME=$(echo "$FULL_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['uptime_seconds'])" 2>/dev/null || echo "ERR")
+if [[ "$UPTIME" != "ERR" && "$UPTIME" -ge 0 ]]; then
+    pass "uptime_seconds present ($UPTIME)"
+else
+    fail "uptime_seconds missing"
+fi
+
+# Check cost structure exists
+COST_USD=$(echo "$FULL_METRICS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(type(d['cost']['estimated_saved_usd']).__name__)" 2>/dev/null || echo "ERR")
+if [[ "$COST_USD" == "float" || "$COST_USD" == "int" ]]; then
+    pass "cost.estimated_saved_usd present"
+else
+    fail "cost structure missing ($COST_USD)"
+fi
+
+# Check per-model stats — gpt-4o-mini should appear
+MODEL_REQS=$(echo "$FULL_METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin)['cost']['by_model'].get('gpt-4o-mini',{}).get('requests',0))" 2>/dev/null || echo "0")
+if [[ "$MODEL_REQS" == "1" ]]; then
+    pass "cost.by_model.gpt-4o-mini.requests = 1"
+else
+    fail "expected per-model tracking, got requests=$MODEL_REQS"
+fi
+
+# Test reset endpoint
+RESET=$(curl -s "http://127.0.0.1:18088/cctx/metrics/reset")
+check_json_field "$RESET" "['status']" "reset" "metrics reset returns ok"
+
+AFTER_RESET=$(curl -s "http://127.0.0.1:18088/cctx/metrics")
+RESET_TOTAL=$(echo "$AFTER_RESET" | python3 -c "import sys,json; print(json.load(sys.stdin)['requests']['total'])" 2>/dev/null || echo "ERR")
+if [[ "$RESET_TOTAL" == "0" ]]; then
+    pass "metrics reset to 0"
+else
+    fail "after reset, requests.total should be 0, got $RESET_TOTAL"
+fi
+
+kill "$METRICS_PID" 2>/dev/null
+wait "$METRICS_PID" 2>/dev/null
+echo
+
+echo "16. Unreachable upstream → structured 502"
 BAD2_CODE=$(curl -s --max-time 5 -o /tmp/cctx_bad2.json -w "%{http_code}" \
     "http://127.0.0.1:18081/v1/chat/completions" \
     -H "Content-Type: application/json" \

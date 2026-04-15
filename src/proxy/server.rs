@@ -1,4 +1,4 @@
-//! axum server setup — routes, shared state, and startup.
+//! axum server setup — routes, shared state, dashboard task, and startup.
 
 use std::sync::Arc;
 
@@ -9,12 +9,12 @@ use crate::core::tokenizer::Tokenizer;
 use crate::pipeline::PipelineConfig;
 
 use super::config::ProxyConfig;
+use super::dashboard;
 use super::handler::{self, AppState};
 use super::metrics::Metrics;
 use super::upstream::UpstreamClient;
 
 pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
-    // ── Build embedding provider from config name ─────────────────────────
     let embedding_provider = build_embedding_provider(config.embedding_provider.as_deref())?;
 
     let pipeline_config = Arc::new(PipelineConfig {
@@ -34,26 +34,28 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         None => "none".to_string(),
     };
     let mode_label = if config.dry_run {
-        "DRY RUN (log only, forward original)"
+        "DRY RUN"
     } else {
         "live"
     };
 
+    let metrics = Arc::new(Metrics::default());
+
     let state = Arc::new(AppState {
         upstream: UpstreamClient::new(&config.upstream_url, config.timeout_secs),
-        metrics: Metrics::default(),
+        metrics: Arc::clone(&metrics),
         strategy_names: config.strategy_names,
         pipeline_config,
         budget: config.budget,
         dry_run: config.dry_run,
+        dashboard: config.dashboard,
     });
 
     let app = Router::new()
         .route("/v1/chat/completions", post(handler::chat_completions))
         .route("/cctx/health", get(handler::health))
         .route("/cctx/metrics", get(handler::get_metrics))
-        // Catch-all: forward any other path to upstream unchanged.
-        // This makes cctx a transparent proxy for ALL OpenAI endpoints.
+        .route("/cctx/metrics/reset", get(handler::reset_metrics))
         .fallback(handler::catchall)
         .with_state(state);
 
@@ -68,10 +70,30 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     eprintln!("│  {:<width$}│", format!("Budget:      {}", budget_label), width = w - 2);
     eprintln!("│  {:<width$}│", format!("Timeout:     {}s", config.timeout_secs), width = w - 2);
     eprintln!("│  {:<width$}│", format!("Mode:        {}", mode_label), width = w - 2);
+    if config.dashboard {
+        eprintln!("│  {:<width$}│", "Dashboard:   enabled", width = w - 2);
+    }
     eprintln!("╰{}╯", "─".repeat(w));
     eprintln!();
     eprintln!("export OPENAI_BASE_URL=http://{}", config.listen_addr);
     eprintln!();
+
+    // ── Dashboard refresh task ────────────────────────────────────────────
+    //
+    // tokio::spawn launches a concurrent task — it runs alongside the HTTP
+    // server on the same async runtime. The task sleeps 5 seconds between
+    // renders so it barely uses any CPU.
+    if config.dashboard {
+        let dash_metrics = Arc::clone(&metrics);
+        tokio::spawn(async move {
+            let mut first = true;
+            loop {
+                dashboard::render(&dash_metrics, first);
+                first = false;
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+    }
 
     let listener = tokio::net::TcpListener::bind(&config.listen_addr)
         .await

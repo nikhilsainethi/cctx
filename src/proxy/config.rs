@@ -12,4 +12,6 @@ pub struct ProxyConfig {
     pub embedding_provider: Option<String>,
     /// Cosine similarity threshold for semantic dedup.
     pub dedup_threshold: f64,
+    /// Show live-updating dashboard on stderr.
+    pub dashboard: bool,
 }

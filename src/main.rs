@@ -165,6 +165,9 @@ enum Commands {
         /// Cosine similarity threshold for semantic dedup.
         #[arg(long, default_value_t = 0.85)]
         dedup_threshold: f64,
+        /// Show live-updating dashboard on stderr.
+        #[arg(long, default_value_t = false)]
+        dashboard: bool,
     },
 
     /// Compare two context files side-by-side (before vs after).
@@ -279,6 +282,7 @@ fn main() -> Result<()> {
             timeout,
             embedding_provider,
             dedup_threshold,
+            dashboard,
         } => {
             for name in &strategy {
                 cctx::pipeline::make_strategy(name)?;
@@ -300,6 +304,7 @@ fn main() -> Result<()> {
                     timeout_secs: timeout,
                     embedding_provider,
                     dedup_threshold,
+                    dashboard,
                 },
             ))
         }
