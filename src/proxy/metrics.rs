@@ -5,8 +5,8 @@
 //! we need key-value tracking with occasional writes.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -44,8 +44,8 @@ pub struct Metrics {
     pub tokens_input_optimized: AtomicU64,
 
     // Optimization latency (our processing time, not upstream latency).
-    pub optimize_latency_total_us: AtomicU64,   // microseconds total
-    pub optimize_latency_count: AtomicU64,       // number of measurements
+    pub optimize_latency_total_us: AtomicU64, // microseconds total
+    pub optimize_latency_count: AtomicU64,    // number of measurements
 
     // Per-strategy and per-model breakdowns need a map → use Mutex.
     pub strategies_applied: Mutex<HashMap<String, u64>>,

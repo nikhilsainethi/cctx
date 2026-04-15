@@ -9,7 +9,7 @@ use cctx::core::context::{AttentionZone, Chunk, Context as AppContext, Message};
 use cctx::core::tokenizer::Tokenizer;
 use cctx::formats::{self, InputFormat};
 use cctx::pipeline::executor::Pipeline;
-use cctx::pipeline::{make_strategy, preset_strategies, PipelineConfig};
+use cctx::pipeline::{PipelineConfig, make_strategy, preset_strategies};
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
@@ -221,7 +221,17 @@ fn main() -> Result<()> {
             let raw = read_input(&file)?;
             let ctx = build_context(&raw, input_format.to_lib())?;
             let provider = make_embedding_provider(embedding_provider.as_deref())?;
-            cmd_optimize(ctx, strategy, preset, query, budget, &output, provider, dedup_threshold, prune_threshold)
+            cmd_optimize(
+                ctx,
+                strategy,
+                preset,
+                query,
+                budget,
+                &output,
+                provider,
+                dedup_threshold,
+                prune_threshold,
+            )
         }
         Commands::Compress {
             file,
@@ -234,10 +244,7 @@ fn main() -> Result<()> {
             let ctx = build_context(&raw, input_format.to_lib())?;
             cmd_compress(ctx, budget, query, &output)
         }
-        Commands::Count {
-            file,
-            input_format,
-        } => {
+        Commands::Count { file, input_format } => {
             let raw = read_input(&file)?;
             let ctx = build_context(&raw, input_format.to_lib())?;
             if ctx.chunk_count() == 0 {
@@ -297,21 +304,19 @@ fn main() -> Result<()> {
                     anyhow::bail!("Budget must be a positive number");
                 }
             }
-            let rt = tokio::runtime::Runtime::new()
-                .context("Failed to create tokio async runtime")?;
-            rt.block_on(cctx::proxy::server::run(
-                cctx::proxy::config::ProxyConfig {
-                    listen_addr: listen,
-                    upstream_url: upstream,
-                    strategy_names: strategy,
-                    budget,
-                    dry_run,
-                    timeout_secs: timeout,
-                    embedding_provider,
-                    dedup_threshold,
-                    dashboard,
-                },
-            ))
+            let rt =
+                tokio::runtime::Runtime::new().context("Failed to create tokio async runtime")?;
+            rt.block_on(cctx::proxy::server::run(cctx::proxy::config::ProxyConfig {
+                listen_addr: listen,
+                upstream_url: upstream,
+                strategy_names: strategy,
+                budget,
+                dry_run,
+                timeout_secs: timeout,
+                embedding_provider,
+                dedup_threshold,
+                dashboard,
+            }))
         }
 
         Commands::Diff {
@@ -544,11 +549,15 @@ fn cmd_diff(before: &AppContext, after: &AppContext, format: OutputFormat) -> Re
 
     match format {
         OutputFormat::Terminal => print_diff_terminal(
-            &report_b, &report_a, &moved, &compressed, &removed, before, after,
+            &report_b,
+            &report_a,
+            &moved,
+            &compressed,
+            &removed,
+            before,
+            after,
         ),
-        OutputFormat::Json => print_diff_json(
-            &report_b, &report_a, &moved, &compressed, &removed,
-        ),
+        OutputFormat::Json => print_diff_json(&report_b, &report_a, &moved, &compressed, &removed),
     }
 
     Ok(())
@@ -572,18 +581,9 @@ fn print_diff_terminal(
     let w2 = 10usize;
     let w3 = 10usize;
 
-    let sep_h = format!(
-        "├{:─<w0$}┼{:─<w1$}┼{:─<w2$}┼{:─<w3$}┤",
-        "", "", "", ""
-    );
-    let top = format!(
-        "┌{:─<w0$}┬{:─<w1$}┬{:─<w2$}┬{:─<w3$}┐",
-        "", "", "", ""
-    );
-    let bot = format!(
-        "└{:─<w0$}┴{:─<w1$}┴{:─<w2$}┴{:─<w3$}┘",
-        "", "", "", ""
-    );
+    let sep_h = format!("├{:─<w0$}┼{:─<w1$}┼{:─<w2$}┼{:─<w3$}┤", "", "", "", "");
+    let top = format!("┌{:─<w0$}┬{:─<w1$}┬{:─<w2$}┬{:─<w3$}┐", "", "", "", "");
+    let bot = format!("└{:─<w0$}┴{:─<w1$}┴{:─<w2$}┴{:─<w3$}┘", "", "", "", "");
 
     let row = |label: &str, b: &str, a: &str, ch: &str| {
         format!(
@@ -702,7 +702,12 @@ fn print_diff_terminal(
         for (b_pos, a_pos, role) in moved.iter().take(5) {
             println!(
                 "  message {} ({}) :: position {}/{} -> {}/{}",
-                b_pos, role, b_pos, ctx_b.chunk_count(), a_pos, ctx_a.chunk_count()
+                b_pos,
+                role,
+                b_pos,
+                ctx_b.chunk_count(),
+                a_pos,
+                ctx_a.chunk_count()
             );
         }
         if moved.len() > 5 {

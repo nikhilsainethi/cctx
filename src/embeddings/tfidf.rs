@@ -17,13 +17,12 @@ use anyhow::Result;
 use super::EmbeddingProvider;
 
 const STOP_WORDS: &[&str] = &[
-    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
-    "with", "by", "is", "it", "its", "are", "was", "be", "has", "have", "had",
-    "do", "does", "did", "will", "would", "could", "should", "may", "can",
-    "this", "that", "these", "those", "i", "you", "he", "she", "we", "they",
-    "my", "your", "his", "her", "our", "their", "me", "him", "us", "them",
-    "what", "which", "who", "whom", "if", "not", "no", "so", "as", "from",
-    "about", "into", "through", "also", "just", "more", "very", "too",
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "is",
+    "it", "its", "are", "was", "be", "has", "have", "had", "do", "does", "did", "will", "would",
+    "could", "should", "may", "can", "this", "that", "these", "those", "i", "you", "he", "she",
+    "we", "they", "my", "your", "his", "her", "our", "their", "me", "him", "us", "them", "what",
+    "which", "who", "whom", "if", "not", "no", "so", "as", "from", "about", "into", "through",
+    "also", "just", "more", "very", "too",
 ];
 
 /// TF-IDF embedder for testing. No API calls, pure computation.
@@ -37,10 +36,7 @@ impl EmbeddingProvider for TfIdfEmbedder {
 
         // ── Build vocabulary across all texts ─────────────────────────────
         let stop: HashSet<&str> = STOP_WORDS.iter().copied().collect();
-        let tokenized: Vec<Vec<String>> = texts
-            .iter()
-            .map(|t| tokenize(t, &stop))
-            .collect();
+        let tokenized: Vec<Vec<String>> = texts.iter().map(|t| tokenize(t, &stop)).collect();
 
         // Collect all unique words for the vector dimensions.
         let mut vocab: Vec<String> = tokenized

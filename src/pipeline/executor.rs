@@ -71,7 +71,10 @@ impl Pipeline {
             return Ok((current, vec![]));
         }
 
-        eprintln!("Budget enforcement: {} tokens -> {} budget", current.total_tokens, budget);
+        eprintln!(
+            "Budget enforcement: {} tokens -> {} budget",
+            current.total_tokens, budget
+        );
 
         let (truncated, warnings) = truncate_to_budget(&current.chunks, budget);
         current = Context::new(truncated);

@@ -50,10 +50,8 @@ fn strategy_order_produces_different_results() {
     assert!(output_bd.status.success());
     assert!(output_db.status.success());
 
-    let msgs_bd: Vec<Value> =
-        serde_json::from_slice(&output_bd.stdout).expect("bd not valid JSON");
-    let msgs_db: Vec<Value> =
-        serde_json::from_slice(&output_db.stdout).expect("db not valid JSON");
+    let msgs_bd: Vec<Value> = serde_json::from_slice(&output_bd.stdout).expect("bd not valid JSON");
+    let msgs_db: Vec<Value> = serde_json::from_slice(&output_db.stdout).expect("db not valid JSON");
 
     // dedup removes one duplicate in both cases → 4 messages.
     assert_eq!(msgs_bd.len(), 4);
@@ -78,8 +76,10 @@ fn structural_then_bookend_compresses_before_reordering() {
         .args([
             "optimize",
             "tests/fixtures/technical_conversation.json",
-            "--strategy", "structural",
-            "--strategy", "bookend",
+            "--strategy",
+            "structural",
+            "--strategy",
+            "bookend",
         ])
         .output()
         .expect("failed to run");
@@ -107,8 +107,10 @@ fn budget_enforces_token_limit() {
         .args([
             "optimize",
             "tests/fixtures/large_conversation.json",
-            "--preset", "balanced",
-            "--budget", "2000",
+            "--preset",
+            "balanced",
+            "--budget",
+            "2000",
         ])
         .output()
         .expect("failed to run optimize");
@@ -144,8 +146,10 @@ fn budget_drops_chunks_reports_warnings() {
         .args([
             "optimize",
             "tests/fixtures/large_conversation.json",
-            "--strategy", "bookend",
-            "--budget", "1500",
+            "--strategy",
+            "bookend",
+            "--budget",
+            "1500",
         ])
         .assert()
         .success()
@@ -159,16 +163,17 @@ fn budget_within_limit_preserves_all_chunks() {
         .args([
             "optimize",
             "tests/fixtures/large_conversation.json",
-            "--strategy", "bookend",
-            "--budget", "100000",
+            "--strategy",
+            "bookend",
+            "--budget",
+            "100000",
         ])
         .output()
         .expect("failed to run");
 
     assert!(output.status.success());
 
-    let msgs: Vec<Value> =
-        serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
+    let msgs: Vec<Value> = serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
     assert_eq!(msgs.len(), 39, "all 39 chunks should be preserved");
 }
 
@@ -182,7 +187,8 @@ fn preset_safe_is_bookend_only() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--preset", "safe",
+            "--preset",
+            "safe",
         ])
         .assert()
         .success()
@@ -197,7 +203,8 @@ fn preset_balanced_is_bookend_plus_structural() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--preset", "balanced",
+            "--preset",
+            "balanced",
         ])
         .assert()
         .success()
@@ -211,11 +218,14 @@ fn preset_aggressive_includes_dedup() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--preset", "aggressive",
+            "--preset",
+            "aggressive",
         ])
         .assert()
         .success()
-        .stderr(predicates::str::contains("Pipeline: bookend, structural, dedup"));
+        .stderr(predicates::str::contains(
+            "Pipeline: bookend, structural, dedup",
+        ));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -269,7 +279,8 @@ fn count_on_piped_optimize_output() {
         .args([
             "optimize",
             "tests/fixtures/technical_conversation.json",
-            "--preset", "balanced",
+            "--preset",
+            "balanced",
         ])
         .output()
         .expect("failed");
@@ -306,27 +317,28 @@ fn compress_never_removes_system_message() {
         .args([
             "compress",
             "tests/fixtures/large_conversation.json",
-            "--budget", "500",
+            "--budget",
+            "500",
         ])
         .output()
         .expect("failed to run compress");
 
     assert!(output.status.success());
 
-    let msgs: Vec<Value> =
-        serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
+    let msgs: Vec<Value> = serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
 
     // Verify system message is present.
-    let has_system = msgs
-        .iter()
-        .any(|m| m["role"].as_str() == Some("system"));
+    let has_system = msgs.iter().any(|m| m["role"].as_str() == Some("system"));
     assert!(
         has_system,
         "system message must NEVER be removed during compression"
     );
 
     // Verify the system content is the original (not truncated or empty).
-    let system_msg = msgs.iter().find(|m| m["role"].as_str() == Some("system")).unwrap();
+    let system_msg = msgs
+        .iter()
+        .find(|m| m["role"].as_str() == Some("system"))
+        .unwrap();
     let content = system_msg["content"].as_str().unwrap();
     assert!(
         content.contains("distributed systems engineer"),
@@ -341,19 +353,22 @@ fn budget_protects_last_two_user_messages() {
         .args([
             "compress",
             "tests/fixtures/large_conversation.json",
-            "--budget", "800",
+            "--budget",
+            "800",
         ])
         .output()
         .expect("failed to run compress");
 
     assert!(output.status.success());
 
-    let msgs: Vec<Value> =
-        serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
+    let msgs: Vec<Value> = serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
 
     // The last 2 user messages in the original are about Kubernetes scaling.
     // Check that at least 2 user messages survive.
-    let user_count = msgs.iter().filter(|m| m["role"].as_str() == Some("user")).count();
+    let user_count = msgs
+        .iter()
+        .filter(|m| m["role"].as_str() == Some("user"))
+        .count();
     assert!(
         user_count >= 2,
         "at least 2 user messages should be protected, found {}",
@@ -369,9 +384,12 @@ fn compress_warns_when_protected_chunks_exceed_budget() {
         .args([
             "compress",
             "tests/fixtures/large_conversation.json",
-            "--budget", "100",
+            "--budget",
+            "100",
         ])
         .assert()
         .success()
-        .stderr(predicates::str::contains("Warning: protected chunks alone use"));
+        .stderr(predicates::str::contains(
+            "Warning: protected chunks alone use",
+        ));
 }

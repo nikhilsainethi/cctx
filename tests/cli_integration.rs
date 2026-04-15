@@ -33,14 +33,18 @@ fn analyze_openai_format_autodetect() {
     // The sample_conversation fixture is OpenAI format [{role, content}].
     // analyze should auto-detect it and produce a valid JSON report.
     let output = cctx()
-        .args(["analyze", "tests/fixtures/sample_conversation.json", "--format", "json"])
+        .args([
+            "analyze",
+            "tests/fixtures/sample_conversation.json",
+            "--format",
+            "json",
+        ])
         .output()
         .expect("failed to run");
 
     assert!(output.status.success(), "exit code was not 0");
 
-    let report: Value = serde_json::from_slice(&output.stdout)
-        .expect("stdout is not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout is not valid JSON");
 
     // OpenAI fixture has 20 messages.
     assert_eq!(report["chunk_count"], 20);
@@ -51,14 +55,18 @@ fn analyze_openai_format_autodetect() {
 fn analyze_anthropic_format_autodetect() {
     // Content arrays with {type: "text"} blocks → should auto-detect as Anthropic.
     let output = cctx()
-        .args(["analyze", "tests/fixtures/anthropic_conversation.json", "--format", "json"])
+        .args([
+            "analyze",
+            "tests/fixtures/anthropic_conversation.json",
+            "--format",
+            "json",
+        ])
         .output()
         .expect("failed to run");
 
     assert!(output.status.success(), "exit code was not 0");
 
-    let report: Value = serde_json::from_slice(&output.stdout)
-        .expect("stdout is not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout is not valid JSON");
 
     // Anthropic fixture has 6 messages (3 user, 3 assistant).
     assert_eq!(report["chunk_count"], 6);
@@ -69,14 +77,18 @@ fn analyze_anthropic_format_autodetect() {
 fn analyze_rag_chunks_autodetect() {
     // Objects with "content" + "score" but no "role" → RAG chunks.
     let output = cctx()
-        .args(["analyze", "tests/fixtures/rag_chunks.json", "--format", "json"])
+        .args([
+            "analyze",
+            "tests/fixtures/rag_chunks.json",
+            "--format",
+            "json",
+        ])
         .output()
         .expect("failed to run");
 
     assert!(output.status.success());
 
-    let report: Value = serde_json::from_slice(&output.stdout)
-        .expect("stdout is not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout is not valid JSON");
 
     assert_eq!(report["chunk_count"], 10);
     assert!(report["total_tokens"].as_u64().unwrap() > 500);
@@ -86,14 +98,18 @@ fn analyze_rag_chunks_autodetect() {
 fn analyze_raw_text_with_explicit_format() {
     // Plain text file requires --input-format raw (or auto-detect since it's not JSON).
     let output = cctx()
-        .args(["analyze", "tests/fixtures/raw_document.txt", "--format", "json"])
+        .args([
+            "analyze",
+            "tests/fixtures/raw_document.txt",
+            "--format",
+            "json",
+        ])
         .output()
         .expect("failed to run");
 
     assert!(output.status.success());
 
-    let report: Value = serde_json::from_slice(&output.stdout)
-        .expect("stdout is not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout is not valid JSON");
 
     // Raw text → 1 chunk.
     assert_eq!(report["chunk_count"], 1);
@@ -114,7 +130,8 @@ fn bookend_places_high_score_chunks_at_edges() {
         .args([
             "optimize",
             "tests/fixtures/rag_chunks.json",
-            "--strategy", "bookend",
+            "--strategy",
+            "bookend",
         ])
         .output()
         .expect("failed to run");
@@ -122,8 +139,8 @@ fn bookend_places_high_score_chunks_at_edges() {
     assert!(output.status.success());
 
     // stdout is the optimized JSON array of messages.
-    let messages: Vec<Value> = serde_json::from_slice(&output.stdout)
-        .expect("stdout is not valid JSON array");
+    let messages: Vec<Value> =
+        serde_json::from_slice(&output.stdout).expect("stdout is not valid JSON array");
 
     assert_eq!(messages.len(), 10);
 
@@ -163,7 +180,8 @@ fn bookend_summary_on_stderr() {
         .args([
             "optimize",
             "tests/fixtures/rag_chunks.json",
-            "--strategy", "bookend",
+            "--strategy",
+            "bookend",
         ])
         .assert()
         .success()
@@ -178,8 +196,8 @@ fn bookend_summary_on_stderr() {
 #[test]
 fn stdin_pipe_analyze_openai() {
     // Pipe OpenAI JSON through stdin → auto-detect → analyze.
-    let fixture = std::fs::read("tests/fixtures/sample_conversation.json")
-        .expect("fixture not found");
+    let fixture =
+        std::fs::read("tests/fixtures/sample_conversation.json").expect("fixture not found");
 
     let output = cctx()
         .args(["analyze", "--format", "json"])
@@ -189,8 +207,7 @@ fn stdin_pipe_analyze_openai() {
 
     assert!(output.status.success());
 
-    let report: Value = serde_json::from_slice(&output.stdout)
-        .expect("stdout is not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout is not valid JSON");
 
     assert_eq!(report["chunk_count"], 20);
 }
@@ -209,8 +226,7 @@ fn stdin_pipe_analyze_raw() {
 #[test]
 fn stdin_pipe_optimize_produces_valid_json() {
     // Pipe RAG chunks → optimize → verify stdout is parseable JSON.
-    let fixture = std::fs::read("tests/fixtures/rag_chunks.json")
-        .expect("fixture not found");
+    let fixture = std::fs::read("tests/fixtures/rag_chunks.json").expect("fixture not found");
 
     let output = cctx()
         .args(["optimize", "--strategy", "bookend"])
@@ -220,22 +236,24 @@ fn stdin_pipe_optimize_produces_valid_json() {
 
     assert!(output.status.success());
 
-    let messages: Vec<Value> = serde_json::from_slice(&output.stdout)
-        .expect("optimize stdout is not valid JSON");
+    let messages: Vec<Value> =
+        serde_json::from_slice(&output.stdout).expect("optimize stdout is not valid JSON");
 
     assert_eq!(messages.len(), 10);
     // Every message should have "role" and "content" fields (normalized to OpenAI output).
     for msg in &messages {
         assert!(msg.get("role").is_some(), "missing 'role' field in output");
-        assert!(msg.get("content").is_some(), "missing 'content' field in output");
+        assert!(
+            msg.get("content").is_some(),
+            "missing 'content' field in output"
+        );
     }
 }
 
 #[test]
 fn stdin_dash_is_equivalent_to_no_file() {
     // `cctx analyze -` with piped stdin should work like `cctx analyze` with stdin.
-    let fixture = std::fs::read("tests/fixtures/rag_chunks.json")
-        .expect("fixture not found");
+    let fixture = std::fs::read("tests/fixtures/rag_chunks.json").expect("fixture not found");
 
     let output = cctx()
         .args(["analyze", "-", "--format", "json"])
@@ -245,8 +263,7 @@ fn stdin_dash_is_equivalent_to_no_file() {
 
     assert!(output.status.success());
 
-    let report: Value = serde_json::from_slice(&output.stdout)
-        .expect("stdout is not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout is not valid JSON");
 
     assert_eq!(report["chunk_count"], 10);
 }
@@ -261,7 +278,8 @@ fn optimize_stdout_is_pure_json_stderr_has_summary() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--strategy", "bookend",
+            "--strategy",
+            "bookend",
         ])
         .output()
         .expect("failed to run");
@@ -287,7 +305,8 @@ fn analyze_json_format_stdout_is_valid_json() {
         .args([
             "analyze",
             "tests/fixtures/anthropic_conversation.json",
-            "--format", "json",
+            "--format",
+            "json",
         ])
         .output()
         .expect("failed to run");
@@ -314,16 +333,17 @@ fn input_format_override_forces_raw_on_json_file() {
         .args([
             "analyze",
             "tests/fixtures/sample_conversation.json",
-            "--input-format", "raw",
-            "--format", "json",
+            "--input-format",
+            "raw",
+            "--format",
+            "json",
         ])
         .output()
         .expect("failed to run");
 
     assert!(output.status.success());
 
-    let report: Value = serde_json::from_slice(&output.stdout)
-        .expect("stdout is not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout is not valid JSON");
 
     // Forced raw → 1 chunk (the entire JSON file as text), not 20 messages.
     assert_eq!(report["chunk_count"], 1);
@@ -346,8 +366,10 @@ fn output_flag_writes_file_and_stderr_confirms() {
         .args([
             "optimize",
             "tests/fixtures/rag_chunks.json",
-            "--strategy", "bookend",
-            "--output", outfile.to_str().unwrap(),
+            "--strategy",
+            "bookend",
+            "--output",
+            outfile.to_str().unwrap(),
         ])
         .assert()
         .success()
@@ -375,8 +397,10 @@ fn pipeline_chained_strategies() {
         .args([
             "optimize",
             "tests/fixtures/technical_conversation.json",
-            "--strategy", "bookend",
-            "--strategy", "structural",
+            "--strategy",
+            "bookend",
+            "--strategy",
+            "structural",
         ])
         .output()
         .expect("failed to run");
@@ -385,14 +409,22 @@ fn pipeline_chained_strategies() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Pipeline log should list both strategies.
-    assert!(stderr.contains("bookend"), "missing bookend in pipeline log");
-    assert!(stderr.contains("structural"), "missing structural in pipeline log");
+    assert!(
+        stderr.contains("bookend"),
+        "missing bookend in pipeline log"
+    );
+    assert!(
+        stderr.contains("structural"),
+        "missing structural in pipeline log"
+    );
     // Structural should reduce tokens (JSON/code compression).
-    assert!(stderr.contains("reduction"), "expected token reduction from structural");
+    assert!(
+        stderr.contains("reduction"),
+        "expected token reduction from structural"
+    );
 
     // stdout is valid JSON.
-    let _: Vec<Value> = serde_json::from_slice(&output.stdout)
-        .expect("stdout must be valid JSON");
+    let _: Vec<Value> = serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -405,7 +437,8 @@ fn preset_safe_runs_bookend_only() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--preset", "safe",
+            "--preset",
+            "safe",
         ])
         .assert()
         .success()
@@ -419,7 +452,8 @@ fn preset_balanced_runs_bookend_and_structural() {
         .args([
             "optimize",
             "tests/fixtures/technical_conversation.json",
-            "--preset", "balanced",
+            "--preset",
+            "balanced",
         ])
         .assert()
         .success()
@@ -432,11 +466,14 @@ fn preset_aggressive_runs_three_strategies() {
         .args([
             "optimize",
             "tests/fixtures/technical_conversation.json",
-            "--preset", "aggressive",
+            "--preset",
+            "aggressive",
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("Pipeline: bookend, structural, dedup"));
+        .stderr(predicate::str::contains(
+            "Pipeline: bookend, structural, dedup",
+        ));
 }
 
 #[test]
@@ -445,7 +482,8 @@ fn unknown_preset_fails() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--preset", "turbo",
+            "--preset",
+            "turbo",
         ])
         .assert()
         .failure()
@@ -463,8 +501,10 @@ fn budget_drops_chunks_to_fit() {
         .args([
             "optimize",
             "tests/fixtures/technical_conversation.json",
-            "--preset", "balanced",
-            "--budget", "2000",
+            "--preset",
+            "balanced",
+            "--budget",
+            "2000",
         ])
         .output()
         .expect("failed to run");
@@ -472,11 +512,14 @@ fn budget_drops_chunks_to_fit() {
     assert!(output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Dropped chunk"), "should warn about dropped chunks");
+    assert!(
+        stderr.contains("Dropped chunk"),
+        "should warn about dropped chunks"
+    );
 
     // Output should have fewer chunks than the original 5.
-    let messages: Vec<Value> = serde_json::from_slice(&output.stdout)
-        .expect("stdout must be valid JSON");
+    let messages: Vec<Value> =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
     assert!(messages.len() < 5, "budget should have dropped some chunks");
 }
 
@@ -487,8 +530,10 @@ fn budget_within_limit_drops_nothing() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--strategy", "bookend",
-            "--budget", "100000",
+            "--strategy",
+            "bookend",
+            "--budget",
+            "100000",
         ])
         .output()
         .expect("failed to run");
@@ -498,8 +543,8 @@ fn budget_within_limit_drops_nothing() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("Dropped"), "no chunks should be dropped");
 
-    let messages: Vec<Value> = serde_json::from_slice(&output.stdout)
-        .expect("stdout must be valid JSON");
+    let messages: Vec<Value> =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
     assert_eq!(messages.len(), 20);
 }
 
@@ -513,7 +558,8 @@ fn compress_hits_budget() {
         .args([
             "compress",
             "tests/fixtures/technical_conversation.json",
-            "--budget", "2000",
+            "--budget",
+            "2000",
         ])
         .output()
         .expect("failed to run");
@@ -521,10 +567,13 @@ fn compress_hits_budget() {
     assert!(output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("structural"), "compress should run structural");
+    assert!(
+        stderr.contains("structural"),
+        "compress should run structural"
+    );
 
-    let messages: Vec<Value> = serde_json::from_slice(&output.stdout)
-        .expect("stdout must be valid JSON");
+    let messages: Vec<Value> =
+        serde_json::from_slice(&output.stdout).expect("stdout must be valid JSON");
     assert!(!messages.is_empty());
 }
 
@@ -543,8 +592,15 @@ fn count_prints_token_number() {
 
     // stdout should be just a number (with trailing newline).
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let count: usize = stdout.trim().parse().expect("count output should be a number");
-    assert!(count > 1000, "sample conversation should be >1000 tokens, got {}", count);
+    let count: usize = stdout
+        .trim()
+        .parse()
+        .expect("count output should be a number");
+    assert!(
+        count > 1000,
+        "sample conversation should be >1000 tokens, got {}",
+        count
+    );
 }
 
 #[test]
@@ -554,7 +610,8 @@ fn count_works_in_pipe() {
         .args([
             "optimize",
             "tests/fixtures/technical_conversation.json",
-            "--preset", "balanced",
+            "--preset",
+            "balanced",
         ])
         .output()
         .expect("failed to run optimize");
@@ -570,7 +627,14 @@ fn count_works_in_pipe() {
     assert!(count_output.status.success());
 
     let stdout = String::from_utf8_lossy(&count_output.stdout);
-    let count: usize = stdout.trim().parse().expect("count output should be a number");
+    let count: usize = stdout
+        .trim()
+        .parse()
+        .expect("count output should be a number");
     // After balanced optimization, should be less than the original ~4868.
-    assert!(count > 0 && count < 4868, "piped count should be between 0 and 4868, got {}", count);
+    assert!(
+        count > 0 && count < 4868,
+        "piped count should be between 0 and 4868, got {}",
+        count
+    );
 }

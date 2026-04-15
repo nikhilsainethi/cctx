@@ -60,8 +60,8 @@ impl UpstreamClient {
         let fwd_headers = strip_hop_by_hop(headers);
 
         // Convert http::Method to reqwest::Method via string.
-        let reqwest_method = reqwest::Method::from_bytes(method.as_str().as_bytes())
-            .unwrap_or(reqwest::Method::GET);
+        let reqwest_method =
+            reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::GET);
 
         self.client
             .request(reqwest_method, &url)

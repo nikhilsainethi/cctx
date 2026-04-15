@@ -72,8 +72,7 @@ fn single_system_message_analyzes_cleanly() {
 
     assert!(output.status.success());
 
-    let report: Value =
-        serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
 
     assert_eq!(report["chunk_count"], 1);
     assert!(report["total_tokens"].as_u64().unwrap() > 0);
@@ -96,10 +95,12 @@ fn single_message_bookend_is_noop() {
 
     assert!(output.status.success());
 
-    let msgs: Vec<Value> =
-        serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
+    let msgs: Vec<Value> = serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
     assert_eq!(msgs.len(), 1);
-    assert_eq!(msgs[0]["content"].as_str().unwrap(), "You are a helpful assistant.");
+    assert_eq!(
+        msgs[0]["content"].as_str().unwrap(),
+        "You are a helpful assistant."
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -143,8 +144,7 @@ fn massive_message_structural_compression() {
 
     assert!(output.status.success());
 
-    let msgs: Vec<Value> =
-        serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
+    let msgs: Vec<Value> = serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
     assert_eq!(msgs.len(), 1);
 }
 
@@ -165,8 +165,7 @@ fn invalid_json_auto_detects_as_raw() {
 
     assert!(output.status.success());
 
-    let report: Value =
-        serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
 
     // Raw text → 1 chunk.
     assert_eq!(report["chunk_count"], 1);
@@ -185,8 +184,7 @@ fn malformed_json_does_not_crash() {
         .expect("failed to run");
 
     assert!(output.status.success());
-    let report: Value =
-        serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("stdout not valid JSON");
     assert_eq!(report["chunk_count"], 1); // treated as raw text
 }
 
@@ -224,8 +222,10 @@ fn budget_zero_on_optimize_gives_error() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--strategy", "bookend",
-            "--budget", "0",
+            "--strategy",
+            "bookend",
+            "--budget",
+            "0",
         ])
         .assert()
         .failure()
@@ -238,7 +238,8 @@ fn budget_zero_on_compress_gives_error() {
         .args([
             "compress",
             "tests/fixtures/sample_conversation.json",
-            "--budget", "0",
+            "--budget",
+            "0",
         ])
         .assert()
         .failure()
@@ -253,7 +254,8 @@ fn budget_negative_is_rejected_by_clap() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--budget", "-5",
+            "--budget",
+            "-5",
         ])
         .assert()
         .failure();
@@ -287,5 +289,7 @@ fn missing_file_on_diff() {
         .args(["diff", "missing_a.json", "missing_b.json"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("File not found").or(predicate::str::contains("Cannot read")));
+        .stderr(
+            predicate::str::contains("File not found").or(predicate::str::contains("Cannot read")),
+        );
 }

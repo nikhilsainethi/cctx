@@ -233,11 +233,7 @@ fn prune_value(value: Value, depth: usize) -> Value {
             if depth > 3 {
                 return Value::String(format!("[...{} items]", arr.len()));
             }
-            Value::Array(
-                arr.into_iter()
-                    .map(|v| prune_value(v, depth + 1))
-                    .collect(),
-            )
+            Value::Array(arr.into_iter().map(|v| prune_value(v, depth + 1)).collect())
         }
         other => other,
     }
@@ -402,11 +398,7 @@ fn extract_python_signatures(code: &str) -> String {
 ///
 /// `comment_fmt` is a template like `"/* ... ({}) */"` where `{}` gets replaced
 /// with the line count (e.g. `"/* ... (12 lines) */"`).
-fn extract_signatures_braces(
-    code: &str,
-    is_decl: fn(&str) -> bool,
-    comment_fmt: &str,
-) -> String {
+fn extract_signatures_braces(code: &str, is_decl: fn(&str) -> bool, comment_fmt: &str) -> String {
     let lines: Vec<&str> = code.lines().collect();
     let mut out: Vec<String> = Vec::new();
     let mut i = 0;
@@ -540,7 +532,11 @@ fn collapse_markdown(text: &str, query: Option<&str>) -> String {
 
     let query_words: HashSet<String> = query
         .split_whitespace()
-        .map(|w| w.to_lowercase().trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+        .map(|w| {
+            w.to_lowercase()
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_string()
+        })
         .filter(|w| !w.is_empty())
         .collect();
 
@@ -577,7 +573,11 @@ fn collapse_markdown(text: &str, query: Option<&str>) -> String {
         // Combine header + body words for relevance check.
         let section_words: HashSet<String> = format!("{} {}", header, body)
             .split_whitespace()
-            .map(|w| w.to_lowercase().trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+            .map(|w| {
+                w.to_lowercase()
+                    .trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_string()
+            })
             .filter(|w| !w.is_empty())
             .collect();
 
@@ -596,10 +596,7 @@ fn collapse_markdown(text: &str, query: Option<&str>) -> String {
             result.push(header.clone());
         } else {
             // Irrelevant with content — collapse.
-            let paragraphs = body
-                .split("\n\n")
-                .filter(|p| !p.trim().is_empty())
-                .count();
+            let paragraphs = body.split("\n\n").filter(|p| !p.trim().is_empty()).count();
             // Rough token estimate: word count ÷ 0.75 (average BPE ratio).
             let approx_tokens = (body.split_whitespace().count() as f64 / 0.75).round() as usize;
             result.push(format!(

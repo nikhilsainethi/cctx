@@ -118,8 +118,7 @@ fn score_by_query(chunks: &mut [Chunk], query: &str) {
                     let tf = words.iter().filter(|w| *w == qw).count() as f64 / word_count;
                     // IDF: log-scaled rarity. Clamp to 0 — if every chunk has the word,
                     // it's not discriminating and shouldn't contribute.
-                    let raw_idf =
-                        (n / (1.0 + *df.get(qw.as_str()).unwrap_or(&0) as f64)).ln();
+                    let raw_idf = (n / (1.0 + *df.get(qw.as_str()).unwrap_or(&0) as f64)).ln();
                     tf * raw_idf.max(0.0)
                 })
                 .sum::<f64>()

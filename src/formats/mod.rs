@@ -60,7 +60,9 @@ pub fn detect_format(raw: &str) -> InputFormat {
         let has_block_content = arr.iter().any(|msg| {
             msg.get("content")
                 .and_then(|c| c.as_array())
-                .map_or(false, |blocks| blocks.iter().any(|b| b.get("type").is_some()))
+                .map_or(false, |blocks| {
+                    blocks.iter().any(|b| b.get("type").is_some())
+                })
         });
         if has_block_content {
             return InputFormat::Anthropic;
@@ -180,8 +182,9 @@ struct RagChunk {
 }
 
 fn parse_rag_chunks(raw: &str) -> Result<Vec<Message>> {
-    let chunks: Vec<RagChunk> = serde_json::from_str(raw.trim())
-        .context("Invalid RAG chunks format — expected [{\"content\": ..., \"score\": ...}, ...]")?;
+    let chunks: Vec<RagChunk> = serde_json::from_str(raw.trim()).context(
+        "Invalid RAG chunks format — expected [{\"content\": ..., \"score\": ...}, ...]",
+    )?;
 
     Ok(chunks
         .into_iter()

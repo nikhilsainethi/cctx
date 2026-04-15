@@ -85,7 +85,10 @@ impl Context {
     pub fn new(chunks: Vec<Chunk>) -> Self {
         // Iterator::sum() adds up all the values. map() transforms each element.
         let total_tokens = chunks.iter().map(|c| c.token_count).sum();
-        Context { chunks, total_tokens }
+        Context {
+            chunks,
+            total_tokens,
+        }
     }
 
     pub fn chunk_count(&self) -> usize {

@@ -139,7 +139,7 @@ pub fn analyze(context: &Context, model: &str) -> HealthReport {
     let health_score = ((dz_score as f64 * (0.30 / W_TOTAL))
         + (dup_score as f64 * (0.25 / W_TOTAL))
         + (budget_score as f64 * (0.20 / W_TOTAL)))
-    .round() as u32;
+        .round() as u32;
 
     // ── Recommendations ───────────────────────────────────────────────────
     let mut recs = Vec::new();
@@ -352,12 +352,7 @@ fn box_line_centered(text: &str) {
     let total_pad = BOX_W.saturating_sub(text.len());
     let left = total_pad / 2;
     let right = total_pad - left;
-    println!(
-        "│{}{}{}│",
-        " ".repeat(left),
-        text.bold(),
-        " ".repeat(right)
-    );
+    println!("│{}{}{}│", " ".repeat(left), text.bold(), " ".repeat(right));
 }
 
 fn box_empty() {

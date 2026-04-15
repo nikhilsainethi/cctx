@@ -22,19 +22,130 @@ use crate::core::tokenizer::Tokenizer;
 // ── Stop words ────────────────────────────────────────────────────────────────
 
 const STOP_WORDS: &[&str] = &[
-    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
-    "with", "by", "is", "it", "its", "are", "was", "be", "has", "have", "had",
-    "do", "does", "did", "will", "would", "could", "should", "may", "can",
-    "this", "that", "these", "those", "i", "you", "he", "she", "we", "they",
-    "my", "your", "his", "her", "our", "their", "me", "him", "us", "them",
-    "what", "which", "who", "whom", "if", "not", "no", "so", "as", "from",
-    "about", "into", "through", "also", "just", "more", "very", "too", "than",
-    "then", "here", "there", "when", "where", "how", "all", "each", "every",
-    "both", "few", "some", "any", "most", "other", "new", "old", "been", "being",
-    "get", "got", "going", "go", "come", "came", "make", "made", "take", "took",
-    "know", "known", "think", "see", "want", "give", "use", "tell", "try",
-    "like", "well", "way", "now", "even", "still", "actually", "really",
-    "basically", "right", "sure", "yes", "yeah", "ok", "okay",
+    "a",
+    "an",
+    "the",
+    "and",
+    "or",
+    "but",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "of",
+    "with",
+    "by",
+    "is",
+    "it",
+    "its",
+    "are",
+    "was",
+    "be",
+    "has",
+    "have",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "can",
+    "this",
+    "that",
+    "these",
+    "those",
+    "i",
+    "you",
+    "he",
+    "she",
+    "we",
+    "they",
+    "my",
+    "your",
+    "his",
+    "her",
+    "our",
+    "their",
+    "me",
+    "him",
+    "us",
+    "them",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "if",
+    "not",
+    "no",
+    "so",
+    "as",
+    "from",
+    "about",
+    "into",
+    "through",
+    "also",
+    "just",
+    "more",
+    "very",
+    "too",
+    "than",
+    "then",
+    "here",
+    "there",
+    "when",
+    "where",
+    "how",
+    "all",
+    "each",
+    "every",
+    "both",
+    "few",
+    "some",
+    "any",
+    "most",
+    "other",
+    "new",
+    "old",
+    "been",
+    "being",
+    "get",
+    "got",
+    "going",
+    "go",
+    "come",
+    "came",
+    "make",
+    "made",
+    "take",
+    "took",
+    "know",
+    "known",
+    "think",
+    "see",
+    "want",
+    "give",
+    "use",
+    "tell",
+    "try",
+    "like",
+    "well",
+    "way",
+    "now",
+    "even",
+    "still",
+    "actually",
+    "really",
+    "basically",
+    "right",
+    "sure",
+    "yes",
+    "yeah",
+    "ok",
+    "okay",
 ];
 
 // ── Filler phrases ────────────────────────────────────────────────────────────
@@ -78,11 +189,7 @@ const FILLER_PHRASES: &[&str] = &[
 ///   - Last 2 user messages (current intent)
 ///
 /// Returns new chunks with trimmed content and recounted tokens.
-pub fn apply(
-    context: &Context,
-    threshold: f64,
-    tokenizer: &Tokenizer,
-) -> Vec<Chunk> {
+pub fn apply(context: &Context, threshold: f64, tokenizer: &Tokenizer) -> Vec<Chunk> {
     let stop: HashSet<&str> = STOP_WORDS.iter().copied().collect();
     let n = context.chunks.len();
 
@@ -138,14 +245,7 @@ pub fn apply(
                     continue;
                 }
 
-                let score = score_sentence(
-                    line,
-                    &chunk.role,
-                    &stop,
-                    &seen_content,
-                    i,
-                    n,
-                );
+                let score = score_sentence(line, &chunk.role, &stop, &seen_content, i, n);
 
                 if score >= threshold {
                     kept.push(line);
@@ -213,8 +313,7 @@ fn score_sentence(
         if earlier.is_empty() || word_set.is_empty() {
             continue;
         }
-        let overlap = word_set.intersection(earlier).count() as f64
-            / word_set.len().max(1) as f64;
+        let overlap = word_set.intersection(earlier).count() as f64 / word_set.len().max(1) as f64;
         if overlap > max_overlap {
             max_overlap = overlap;
         }

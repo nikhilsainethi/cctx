@@ -61,7 +61,11 @@ pub fn render(metrics: &Arc<Metrics>, first: bool) {
     };
 
     eprintln!("{clear_line}╭{}╮", "─".repeat(w));
-    eprintln!("{clear_line}│  {:<width$}│", "cctx proxy — live stats", width = w - 2);
+    eprintln!(
+        "{clear_line}│  {:<width$}│",
+        "cctx proxy — live stats",
+        width = w - 2
+    );
     eprintln!("{clear_line}├{}┤", "─".repeat(w));
     eprintln!(
         "{clear_line}│  {:<width$}│",
@@ -88,7 +92,10 @@ pub fn render(metrics: &Arc<Metrics>, first: bool) {
     );
     eprintln!(
         "{clear_line}│  {:<width$}│",
-        format!("Avg optimization latency: {:.1}ms", snap.avg_optimize_latency_ms),
+        format!(
+            "Avg optimization latency: {:.1}ms",
+            snap.avg_optimize_latency_ms
+        ),
         width = w - 2
     );
     eprintln!(
@@ -113,9 +120,5 @@ fn format_number(n: u64) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
-    }
+    if s.len() <= max { s } else { &s[..max] }
 }

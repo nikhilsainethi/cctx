@@ -88,7 +88,11 @@ impl Strategy for PruneStrategy {
         "prune"
     }
     fn apply(&self, context: &Context, config: &PipelineConfig) -> Result<Vec<Chunk>> {
-        Ok(prune::apply(context, config.prune_threshold, &config.tokenizer))
+        Ok(prune::apply(
+            context,
+            config.prune_threshold,
+            &config.tokenizer,
+        ))
     }
 }
 

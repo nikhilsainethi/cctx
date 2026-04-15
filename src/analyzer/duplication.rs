@@ -21,13 +21,12 @@ pub struct DuplicatePair {
 // content duplication. Filtering these makes Jaccard focus on meaningful overlap.
 
 const STOP_WORDS: &[&str] = &[
-    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
-    "with", "by", "is", "it", "its", "are", "was", "be", "has", "have", "had",
-    "do", "does", "did", "will", "would", "could", "should", "may", "can",
-    "this", "that", "these", "those", "i", "you", "he", "she", "we", "they",
-    "my", "your", "his", "her", "our", "their", "me", "him", "us", "them",
-    "what", "which", "who", "whom", "if", "not", "no", "so", "as", "from",
-    "about", "into", "through", "also", "just", "more", "very", "too", "than",
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "is",
+    "it", "its", "are", "was", "be", "has", "have", "had", "do", "does", "did", "will", "would",
+    "could", "should", "may", "can", "this", "that", "these", "those", "i", "you", "he", "she",
+    "we", "they", "my", "your", "his", "her", "our", "their", "me", "him", "us", "them", "what",
+    "which", "who", "whom", "if", "not", "no", "so", "as", "from", "about", "into", "through",
+    "also", "just", "more", "very", "too", "than",
 ];
 
 // ── Word extraction ───────────────────────────────────────────────────────────
@@ -47,7 +46,10 @@ fn extract_words(text: &str) -> HashSet<String> {
         // trim_matches strips characters from both ends of a string.
         // The closure |c: char| is a predicate — strip if true.
         // We keep alphanumeric chars and $ (for "$3,000" style tokens).
-        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '$').to_string())
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_alphanumeric() && c != '$')
+                .to_string()
+        })
         // Filter: keep words longer than 1 char and not in stop list.
         // .as_str() borrows the String as &str so we can look it up in the stop set.
         .filter(|w| w.len() > 1 && !stop.contains(w.as_str()))
@@ -83,7 +85,8 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
 /// It works with Vec<Chunk>, arrays, or any contiguous collection.
 pub fn detect_duplicates(chunks: &[Chunk], threshold: f64) -> (Vec<DuplicatePair>, usize) {
     // Pre-compute word sets so each chunk is tokenized only once.
-    let word_sets: Vec<HashSet<String>> = chunks.iter().map(|c| extract_words(&c.content)).collect();
+    let word_sets: Vec<HashSet<String>> =
+        chunks.iter().map(|c| extract_words(&c.content)).collect();
 
     let mut pairs = Vec::new();
     let mut dup_tokens_est = 0.0f64;

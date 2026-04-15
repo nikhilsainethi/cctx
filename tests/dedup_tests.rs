@@ -25,7 +25,8 @@ fn duplicate_fixture_has_duplication_detected_by_analyzer() {
         .args([
             "analyze",
             "tests/fixtures/duplicate_heavy_conversation.json",
-            "--format", "json",
+            "--format",
+            "json",
         ])
         .output()
         .expect("failed to run");
@@ -53,9 +54,12 @@ fn tfidf_dedup_removes_near_duplicate_chunks() {
         .args([
             "optimize",
             "tests/fixtures/duplicate_heavy_conversation.json",
-            "--strategy", "dedup",
-            "--embedding-provider", "tfidf",
-            "--dedup-threshold", "0.3",
+            "--strategy",
+            "dedup",
+            "--embedding-provider",
+            "tfidf",
+            "--dedup-threshold",
+            "0.3",
         ])
         .output()
         .expect("failed to run");
@@ -77,9 +81,12 @@ fn tfidf_dedup_preserves_unique_content() {
         .args([
             "optimize",
             "tests/fixtures/duplicate_heavy_conversation.json",
-            "--strategy", "dedup",
-            "--embedding-provider", "tfidf",
-            "--dedup-threshold", "0.3",
+            "--strategy",
+            "dedup",
+            "--embedding-provider",
+            "tfidf",
+            "--dedup-threshold",
+            "0.3",
         ])
         .output()
         .expect("failed to run");
@@ -108,9 +115,12 @@ fn tfidf_dedup_merges_unique_sentences() {
         .args([
             "optimize",
             "tests/fixtures/duplicate_heavy_conversation.json",
-            "--strategy", "dedup",
-            "--embedding-provider", "tfidf",
-            "--dedup-threshold", "0.3",
+            "--strategy",
+            "dedup",
+            "--embedding-provider",
+            "tfidf",
+            "--dedup-threshold",
+            "0.3",
         ])
         .output()
         .expect("failed to run");
@@ -138,7 +148,8 @@ fn dedup_without_provider_does_exact_match() {
         .args([
             "optimize",
             "tests/fixtures/duplicate_heavy_conversation.json",
-            "--strategy", "dedup",
+            "--strategy",
+            "dedup",
         ])
         .output()
         .expect("failed to run");
@@ -147,7 +158,11 @@ fn dedup_without_provider_does_exact_match() {
 
     let msgs: Vec<Value> = serde_json::from_slice(&output.stdout).expect("not JSON");
     // No exact duplicates → all 25 chunks preserved.
-    assert_eq!(msgs.len(), 25, "exact-match dedup should preserve all unique chunks");
+    assert_eq!(
+        msgs.len(),
+        25,
+        "exact-match dedup should preserve all unique chunks"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -160,10 +175,14 @@ fn dedup_in_pipeline_with_bookend() {
         .args([
             "optimize",
             "tests/fixtures/duplicate_heavy_conversation.json",
-            "--strategy", "bookend",
-            "--strategy", "dedup",
-            "--embedding-provider", "tfidf",
-            "--dedup-threshold", "0.3",
+            "--strategy",
+            "bookend",
+            "--strategy",
+            "dedup",
+            "--embedding-provider",
+            "tfidf",
+            "--dedup-threshold",
+            "0.3",
         ])
         .output()
         .expect("failed to run");
@@ -194,18 +213,29 @@ fn diff_shows_dedup_removed_messages() {
 
     cctx()
         .args([
-            "optimize", fixture,
-            "--strategy", "dedup",
-            "--embedding-provider", "tfidf",
-            "--dedup-threshold", "0.3",
-            "--output", optimized.to_str().unwrap(),
+            "optimize",
+            fixture,
+            "--strategy",
+            "dedup",
+            "--embedding-provider",
+            "tfidf",
+            "--dedup-threshold",
+            "0.3",
+            "--output",
+            optimized.to_str().unwrap(),
         ])
         .assert()
         .success();
 
     // Run diff.
     let output = cctx()
-        .args(["diff", fixture, optimized.to_str().unwrap(), "--format", "json"])
+        .args([
+            "diff",
+            fixture,
+            optimized.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
         .output()
         .expect("failed to run diff");
 
@@ -217,10 +247,7 @@ fn diff_shows_dedup_removed_messages() {
         .as_array()
         .map(|a| a.len())
         .unwrap_or(0);
-    assert!(
-        removed > 0,
-        "diff should show removed messages from dedup"
-    );
+    assert!(removed > 0, "diff should show removed messages from dedup");
 
     let before_msgs = diff["before"]["messages"].as_u64().unwrap();
     let after_msgs = diff["after"]["messages"].as_u64().unwrap();
@@ -245,9 +272,12 @@ fn tfidf_dedup_single_message_is_noop() {
     let output = cctx()
         .args([
             "optimize",
-            "--strategy", "dedup",
-            "--embedding-provider", "tfidf",
-            "--dedup-threshold", "0.3",
+            "--strategy",
+            "dedup",
+            "--embedding-provider",
+            "tfidf",
+            "--dedup-threshold",
+            "0.3",
         ])
         .write_stdin(input)
         .output()
@@ -272,9 +302,12 @@ fn tfidf_dedup_identical_messages_removes_duplicates() {
     let output = cctx()
         .args([
             "optimize",
-            "--strategy", "dedup",
-            "--embedding-provider", "tfidf",
-            "--dedup-threshold", "0.5",
+            "--strategy",
+            "dedup",
+            "--embedding-provider",
+            "tfidf",
+            "--dedup-threshold",
+            "0.5",
         ])
         .write_stdin(input)
         .output()
@@ -296,8 +329,10 @@ fn unknown_embedding_provider_gives_error() {
         .args([
             "optimize",
             "tests/fixtures/sample_conversation.json",
-            "--strategy", "dedup",
-            "--embedding-provider", "nonexistent",
+            "--strategy",
+            "dedup",
+            "--embedding-provider",
+            "nonexistent",
         ])
         .assert()
         .failure()

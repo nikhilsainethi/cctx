@@ -29,7 +29,13 @@ fn prune_removes_filler_lines() {
     ]).to_string();
 
     let output = cctx()
-        .args(["optimize", "--strategy", "prune", "--prune-threshold", "0.5"])
+        .args([
+            "optimize",
+            "--strategy",
+            "prune",
+            "--prune-threshold",
+            "0.5",
+        ])
         .write_stdin(input)
         .output()
         .expect("failed to run");
@@ -66,7 +72,13 @@ fn prune_removes_short_acknowledgments() {
     ]).to_string();
 
     let output = cctx()
-        .args(["optimize", "--strategy", "prune", "--prune-threshold", "0.5"])
+        .args([
+            "optimize",
+            "--strategy",
+            "prune",
+            "--prune-threshold",
+            "0.5",
+        ])
         .write_stdin(input)
         .output()
         .expect("failed to run");
@@ -77,10 +89,7 @@ fn prune_removes_short_acknowledgments() {
 
     // Short acknowledgments like "OK.", "Sure.", "Thanks!" should be pruned.
     let asst = msgs[2]["content"].as_str().unwrap();
-    assert!(
-        !asst.starts_with("OK."),
-        "short 'OK.' should be pruned"
-    );
+    assert!(!asst.starts_with("OK."), "short 'OK.' should be pruned");
     assert!(
         asst.contains("Kubernetes"),
         "substantive Kubernetes definition should survive"
@@ -100,7 +109,13 @@ fn prune_never_touches_system_message() {
     ]).to_string();
 
     let output = cctx()
-        .args(["optimize", "--strategy", "prune", "--prune-threshold", "0.5"])
+        .args([
+            "optimize",
+            "--strategy",
+            "prune",
+            "--prune-threshold",
+            "0.5",
+        ])
         .write_stdin(input)
         .output()
         .expect("failed to run");
@@ -132,7 +147,13 @@ fn prune_never_touches_last_two_user_messages() {
     ]).to_string();
 
     let output = cctx()
-        .args(["optimize", "--strategy", "prune", "--prune-threshold", "0.5"])
+        .args([
+            "optimize",
+            "--strategy",
+            "prune",
+            "--prune-threshold",
+            "0.5",
+        ])
         .write_stdin(input)
         .output()
         .expect("failed to run");
@@ -170,7 +191,13 @@ fn prune_replaces_empty_messages_with_placeholder() {
     ]).to_string();
 
     let output = cctx()
-        .args(["optimize", "--strategy", "prune", "--prune-threshold", "0.6"])
+        .args([
+            "optimize",
+            "--strategy",
+            "prune",
+            "--prune-threshold",
+            "0.6",
+        ])
         .write_stdin(input)
         .output()
         .expect("failed to run");
@@ -188,7 +215,10 @@ fn prune_replaces_empty_messages_with_placeholder() {
 
     // The substantive assistant message should survive.
     let real_msg = msgs[4]["content"].as_str().unwrap();
-    assert!(real_msg.contains("Rust"), "substantive content should survive");
+    assert!(
+        real_msg.contains("Rust"),
+        "substantive content should survive"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -201,7 +231,8 @@ fn prune_in_aggressive_preset() {
         .args([
             "optimize",
             "tests/fixtures/large_conversation.json",
-            "--preset", "aggressive",
+            "--preset",
+            "aggressive",
         ])
         .assert()
         .success()
@@ -214,8 +245,10 @@ fn prune_strategy_standalone() {
         .args([
             "optimize",
             "tests/fixtures/large_conversation.json",
-            "--strategy", "prune",
-            "--prune-threshold", "0.4",
+            "--strategy",
+            "prune",
+            "--prune-threshold",
+            "0.4",
         ])
         .output()
         .expect("failed to run");
@@ -245,7 +278,13 @@ fn prune_detects_repeated_content() {
     ]).to_string();
 
     let output = cctx()
-        .args(["optimize", "--strategy", "prune", "--prune-threshold", "0.5"])
+        .args([
+            "optimize",
+            "--strategy",
+            "prune",
+            "--prune-threshold",
+            "0.5",
+        ])
         .write_stdin(input)
         .output()
         .expect("failed to run");
@@ -256,7 +295,8 @@ fn prune_detects_repeated_content() {
 
     // The later repetitions of the stack description should score lower due
     // to repetition detection. Count total tokens to verify compression.
-    let original_tokens_estimate: usize = msgs.iter()
+    let original_tokens_estimate: usize = msgs
+        .iter()
         .filter_map(|m| m["content"].as_str())
         .map(|s| s.split_whitespace().count())
         .sum();

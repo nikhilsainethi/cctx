@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use crate::core::context::{Chunk, Context};
 use crate::core::tokenizer::Tokenizer;
-use crate::embeddings::{cosine_similarity, EmbeddingProvider};
+use crate::embeddings::{EmbeddingProvider, cosine_similarity};
 
 /// Exact-match deduplication — removes chunks with identical content.
 /// First occurrence is kept; subsequent duplicates are dropped.

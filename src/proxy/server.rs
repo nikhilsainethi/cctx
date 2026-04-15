@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 
 use crate::core::tokenizer::Tokenizer;
 use crate::pipeline::PipelineConfig;
@@ -34,11 +34,7 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         Some(b) => format!("{} tokens", b),
         None => "none".to_string(),
     };
-    let mode_label = if config.dry_run {
-        "DRY RUN"
-    } else {
-        "live"
-    };
+    let mode_label = if config.dry_run { "DRY RUN" } else { "live" };
 
     let metrics = Arc::new(Metrics::default());
 
@@ -64,13 +60,41 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     let w = 50;
     eprintln!("╭{}╮", "─".repeat(w));
-    eprintln!("│  {:<width$}│", format!("cctx proxy v{}", version), width = w - 2);
-    eprintln!("│  {:<width$}│", format!("Listening:   {}", config.listen_addr), width = w - 2);
-    eprintln!("│  {:<width$}│", format!("Upstream:    {}", config.upstream_url), width = w - 2);
-    eprintln!("│  {:<width$}│", format!("Strategies:  {}", strategy_label), width = w - 2);
-    eprintln!("│  {:<width$}│", format!("Budget:      {}", budget_label), width = w - 2);
-    eprintln!("│  {:<width$}│", format!("Timeout:     {}s", config.timeout_secs), width = w - 2);
-    eprintln!("│  {:<width$}│", format!("Mode:        {}", mode_label), width = w - 2);
+    eprintln!(
+        "│  {:<width$}│",
+        format!("cctx proxy v{}", version),
+        width = w - 2
+    );
+    eprintln!(
+        "│  {:<width$}│",
+        format!("Listening:   {}", config.listen_addr),
+        width = w - 2
+    );
+    eprintln!(
+        "│  {:<width$}│",
+        format!("Upstream:    {}", config.upstream_url),
+        width = w - 2
+    );
+    eprintln!(
+        "│  {:<width$}│",
+        format!("Strategies:  {}", strategy_label),
+        width = w - 2
+    );
+    eprintln!(
+        "│  {:<width$}│",
+        format!("Budget:      {}", budget_label),
+        width = w - 2
+    );
+    eprintln!(
+        "│  {:<width$}│",
+        format!("Timeout:     {}s", config.timeout_secs),
+        width = w - 2
+    );
+    eprintln!(
+        "│  {:<width$}│",
+        format!("Mode:        {}", mode_label),
+        width = w - 2
+    );
     if config.dashboard {
         eprintln!("│  {:<width$}│", "Dashboard:   enabled", width = w - 2);
     }
@@ -110,9 +134,7 @@ fn build_embedding_provider(
 ) -> anyhow::Result<Option<Arc<dyn crate::embeddings::EmbeddingProvider>>> {
     match name {
         None => Ok(None),
-        Some("tfidf") => Ok(Some(Arc::new(
-            crate::embeddings::tfidf::TfIdfEmbedder,
-        ))),
+        Some("tfidf") => Ok(Some(Arc::new(crate::embeddings::tfidf::TfIdfEmbedder))),
         #[cfg(feature = "embeddings")]
         Some("ollama") => Ok(Some(Arc::new(
             crate::embeddings::ollama::OllamaEmbedder::default_local(),
