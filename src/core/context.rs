@@ -74,6 +74,7 @@ impl Chunk {
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct Context {
     pub chunks: Vec<Chunk>,
     pub total_tokens: usize,

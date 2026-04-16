@@ -1,0 +1,532 @@
+[
+  {
+    "content": "Kubernetes Pod Networking: Every pod in a Kubernetes cluster gets its own unique IP address. This means you don't need to worry about port conflicts between pods, and pods can be treated much like VMs or physical hosts from a networking perspective. Pods on a node can communicate with all pods on all nodes without NAT. Agents on a node (e.g., system daemons, kubelet) can communicate with all pods on that node. The Kubernetes networking model is flat \u2014 all pods see each other's IP addresses directly. This is implemented by the Container Network Interface (CNI) plugin that the cluster administrator chooses during cluster setup. Popular CNI plugins include Calico, Cilium, Flannel, and Weave Net. Each implements the flat networking model differently using technologies like VXLAN overlays, BGP routing, or eBPF.",
+    "score": 0.95,
+    "metadata": {
+      "source": "k8s-networking-guide.md",
+      "section": "Overview"
+    }
+  },
+  {
+    "content": "CNI (Container Network Interface) plugins are responsible for connecting container network namespaces to the host network. When a pod is created, the kubelet calls the CNI plugin to set up networking for that pod. The CNI plugin assigns an IP address from a configured CIDR range, creates a virtual ethernet pair (veth), and sets up routing rules. Popular CNI plugins for Kubernetes include: Calico (uses BGP for routing, supports network policies, no overlay by default), Cilium (uses eBPF for high-performance networking and security, supports L7 network policies), Flannel (simple overlay network using VXLAN, easy to set up but fewer features), and Weave Net (mesh overlay network with encryption support). The choice of CNI plugin affects network performance, security capabilities, and operational complexity.",
+    "score": 0.92,
+    "metadata": {
+      "source": "cni-deep-dive.md"
+    }
+  },
+  {
+    "content": "Container Network Interface (CNI) is the standard for configuring network interfaces in Linux containers. In Kubernetes, CNI plugins handle pod-to-pod communication. The most widely used CNI plugins are Calico, Cilium, and Flannel. Calico provides networking and network policy enforcement using BGP routing, making it popular for large-scale deployments. Cilium leverages eBPF technology in the Linux kernel for highly efficient packet processing and advanced security features. Flannel is the simplest option, creating a VXLAN overlay network that works well for small to medium clusters. Each CNI plugin has trade-offs between performance, features, and complexity.",
+    "score": 0.9,
+    "metadata": {
+      "source": "k8s-cni-comparison.md"
+    }
+  },
+  {
+    "content": "Kubernetes Services provide a stable network endpoint for a set of pods. A Service gets a cluster-internal IP address (ClusterIP) that doesn't change even when the underlying pods are replaced. Kube-proxy, running on every node, maintains iptables or IPVS rules that route traffic destined for a Service's ClusterIP to one of the healthy backend pods. Service types include: ClusterIP (internal only, default), NodePort (exposes on a static port on each node), LoadBalancer (provisions an external load balancer), and ExternalName (maps to a DNS name). For most internal communication between microservices, ClusterIP is the right choice.",
+    "score": 0.85,
+    "metadata": {
+      "source": "k8s-services.md"
+    }
+  },
+  {
+    "content": "Network Policies in Kubernetes allow you to control traffic flow at the IP address or port level. By default, pods are non-isolated \u2014 they accept traffic from any source. Once a NetworkPolicy selects a pod, that pod becomes isolated and only accepts connections allowed by NetworkPolicy rules. Network policies require a CNI plugin that supports them (Calico, Cilium, Weave Net). Flannel does not support network policies natively. Example: restrict a database pod to only accept connections from the application tier:\n\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: db-restrict\nspec:\n  podSelector:\n    matchLabels:\n      app: database\n  ingress:\n  - from:\n    - podSelector:\n        matchLabels:\n          tier: application\n    ports:\n    - protocol: TCP\n      port: 5432",
+    "score": 0.78,
+    "metadata": {
+      "source": "network-policies.md"
+    }
+  },
+  {
+    "content": "DNS resolution in Kubernetes is handled by CoreDNS, which runs as a deployment in the kube-system namespace. Every Service gets a DNS entry: <service-name>.<namespace>.svc.cluster.local. Pods can reach services by their short name within the same namespace, or by the fully qualified domain name across namespaces. CoreDNS also supports custom DNS entries, upstream DNS forwarding, and caching. For pod-to-pod communication without a Service, pods can use the pod's IP directly, but this is fragile since pod IPs change on restart.",
+    "score": 0.72,
+    "metadata": {
+      "source": "k8s-dns.md"
+    }
+  },
+  {
+    "content": "Ingress controllers manage external access to services in a Kubernetes cluster. An Ingress resource defines rules for routing HTTP(S) traffic to services. Popular ingress controllers include: NGINX Ingress Controller (most widely used, supports path-based and host-based routing), AWS ALB Ingress Controller (integrates with AWS Application Load Balancers), Traefik (automatic HTTPS with Let's Encrypt), and Istio Ingress Gateway (part of the Istio service mesh). The ingress controller watches for Ingress resources and configures the underlying load balancer accordingly.",
+    "score": 0.68,
+    "metadata": {
+      "source": "ingress-guide.md"
+    }
+  },
+  {
+    "content": "Pod networking in Kubernetes relies on the Container Network Interface (CNI) specification. When the kubelet starts a pod, it invokes the configured CNI plugin to set up the pod's network namespace. The CNI plugin is responsible for: allocating an IP address to the pod from the cluster's pod CIDR range, creating virtual network interfaces (veth pairs), configuring routing tables so pods on different nodes can communicate, and enforcing network policies if supported. Without a CNI plugin, pods cannot communicate with each other or with external networks.",
+    "score": 0.88,
+    "metadata": {
+      "source": "pod-networking-internals.md"
+    }
+  },
+  {
+    "content": "Service mesh solutions like Istio and Linkerd add a layer of infrastructure between services in a Kubernetes cluster. A service mesh provides: mutual TLS (mTLS) for encrypted service-to-service communication, traffic management (canary deployments, circuit breaking, retries), observability (distributed tracing, metrics, access logs), and fine-grained traffic policies. The mesh works by injecting a sidecar proxy (Envoy in Istio, linkerd-proxy in Linkerd) into each pod. All traffic to and from the pod flows through this proxy, enabling transparent encryption, load balancing, and telemetry collection.",
+    "score": 0.55,
+    "metadata": {
+      "source": "service-mesh-overview.md"
+    }
+  },
+  {
+    "content": "Calico is one of the most popular CNI plugins for Kubernetes. It provides both networking and network security using standard Linux networking tools. Calico can operate in two modes: direct routing (using BGP to distribute routes between nodes \u2014 no overlay, best performance) and VXLAN overlay (encapsulates packets for environments where BGP isn't available, like some cloud providers). Calico's network policy engine extends Kubernetes NetworkPolicy with additional features: global network policies, DNS-based policies, and application layer (L7) policies. For large clusters (1000+ nodes), Calico with BGP is the recommended choice due to its scalability and performance characteristics.",
+    "score": 0.82,
+    "metadata": {
+      "source": "calico-guide.md"
+    }
+  },
+  {
+    "content": "Troubleshooting Kubernetes networking issues requires understanding the network stack. Common issues and debugging steps: 1) Pod can't reach another pod \u2014 check CNI plugin status, verify pod CIDR allocation, test with 'kubectl exec' into a pod and ping another pod's IP. 2) Service not routing traffic \u2014 verify endpoints with 'kubectl get endpoints', check kube-proxy logs, verify iptables/IPVS rules. 3) DNS resolution failing \u2014 check CoreDNS pods are running, test with 'nslookup' from a debug pod, verify /etc/resolv.conf in pods. 4) External traffic not reaching pods \u2014 verify Ingress controller is running, check Ingress resource configuration, verify LoadBalancer provisioning.",
+    "score": 0.75,
+    "metadata": {
+      "source": "k8s-networking-troubleshooting.md"
+    }
+  },
+  {
+    "content": "eBPF (extended Berkeley Packet Filter) is revolutionizing Kubernetes networking. Cilium, the leading eBPF-based CNI plugin, uses eBPF programs attached to the Linux kernel to process network packets at near-wire speed without the overhead of iptables rules. Benefits of eBPF-based networking: 10x faster than iptables for large rule sets, transparent encryption without sidecar proxies, L7 visibility into HTTP/gRPC/Kafka traffic, identity-based security policies (not just IP-based), and Hubble for real-time network observability. eBPF requires a modern Linux kernel (5.4+) and is becoming the de facto standard for high-performance Kubernetes networking.",
+    "score": 0.65,
+    "metadata": {
+      "source": "ebpf-networking.md"
+    }
+  },
+  {
+    "content": "Multi-cluster Kubernetes networking enables services in different clusters to communicate. Approaches include: Submariner (creates encrypted tunnels between clusters, supports service discovery across clusters), Cilium ClusterMesh (extends Cilium's eBPF networking across multiple clusters), Istio multi-cluster (uses Istio's service mesh to route traffic between clusters), and DNS-based federation (simple approach using external DNS to route between clusters). Multi-cluster networking is complex and should only be adopted when there's a clear need for geographic distribution, blast radius isolation, or compliance requirements.",
+    "score": 0.42,
+    "metadata": {
+      "source": "multi-cluster.md"
+    }
+  },
+  {
+    "content": "IPv6 support in Kubernetes has been stable since version 1.23. Kubernetes supports dual-stack networking, where pods and services can have both IPv4 and IPv6 addresses. To enable dual-stack: configure the cluster CIDR for both address families, enable the IPv6DualStack feature gate (default on since 1.23), and ensure your CNI plugin supports dual-stack (Calico and Cilium both do). Services can be configured as IPv4-only, IPv6-only, or dual-stack. For new deployments, dual-stack is recommended to future-proof your cluster.",
+    "score": 0.48,
+    "metadata": {
+      "source": "ipv6-k8s.md"
+    }
+  },
+  {
+    "content": "Network performance tuning for Kubernetes involves several layers. At the node level: increase the maximum number of connections (sysctl net.core.somaxconn), tune TCP buffer sizes, and enable TCP BBR congestion control. At the pod level: set appropriate resource requests to avoid CPU throttling during packet processing, use host networking for latency-sensitive workloads, and consider DPDK or SR-IOV for ultra-high-performance networking. At the CNI level: choose direct routing over overlay when possible, tune MTU sizes to avoid fragmentation, and use eBPF-based CNI (Cilium) for large clusters with many network policies.",
+    "score": 0.58,
+    "metadata": {
+      "source": "network-performance.md"
+    }
+  },
+  {
+    "content": "Kubernetes Pod Networking: Every pod in a Kubernetes cluster gets its own unique IP address. This means you don't need to worry about port conflicts between pods, and pods can be treated much like VMs or physical hosts from a networking perspective. Pods on a node can communicate with all pods on all nodes without NAT. Agents on a node (e.g., system daemons, kubelet) can communicate with all pods on that node. The Kubernetes networking model is flat \u2014 all pods see each other's IP addresses directly. This is implemented by the Container Network Interface (CNI) plugin that the cluster administrator chooses during cluster setup. Popular CNI plugins include Calico, Cilium, Flannel, and Weave Net. Each implements the flat networking model differently using technologies like VXLAN overlays, BGP routing, or eBPF.",
+    "score": 0.95,
+    "metadata": {
+      "source": "k8s-networking-guide.md",
+      "section": "Overview"
+    }
+  },
+  {
+    "content": "CNI (Container Network Interface) plugins are responsible for connecting container network namespaces to the host network. When a pod is created, the kubelet calls the CNI plugin to set up networking for that pod. The CNI plugin assigns an IP address from a configured CIDR range, creates a virtual ethernet pair (veth), and sets up routing rules. Popular CNI plugins for Kubernetes include: Calico (uses BGP for routing, supports network policies, no overlay by default), Cilium (uses eBPF for high-performance networking and security, supports L7 network policies), Flannel (simple overlay network using VXLAN, easy to set up but fewer features), and Weave Net (mesh overlay network with encryption support). The choice of CNI plugin affects network performance, security capabilities, and operational complexity.",
+    "score": 0.92,
+    "metadata": {
+      "source": "cni-deep-dive.md"
+    }
+  },
+  {
+    "content": "Container Network Interface (CNI) is the standard for configuring network interfaces in Linux containers. In Kubernetes, CNI plugins handle pod-to-pod communication. The most widely used CNI plugins are Calico, Cilium, and Flannel. Calico provides networking and network policy enforcement using BGP routing, making it popular for large-scale deployments. Cilium leverages eBPF technology in the Linux kernel for highly efficient packet processing and advanced security features. Flannel is the simplest option, creating a VXLAN overlay network that works well for small to medium clusters. Each CNI plugin has trade-offs between performance, features, and complexity.",
+    "score": 0.9,
+    "metadata": {
+      "source": "k8s-cni-comparison.md"
+    }
+  },
+  {
+    "content": "Kubernetes Services provide a stable network endpoint for a set of pods. A Service gets a cluster-internal IP address (ClusterIP) that doesn't change even when the underlying pods are replaced. Kube-proxy, running on every node, maintains iptables or IPVS rules that route traffic destined for a Service's ClusterIP to one of the healthy backend pods. Service types include: ClusterIP (internal only, default), NodePort (exposes on a static port on each node), LoadBalancer (provisions an external load balancer), and ExternalName (maps to a DNS name). For most internal communication between microservices, ClusterIP is the right choice.",
+    "score": 0.85,
+    "metadata": {
+      "source": "k8s-services.md"
+    }
+  },
+  {
+    "content": "Network Policies in Kubernetes allow you to control traffic flow at the IP address or port level. By default, pods are non-isolated \u2014 they accept traffic from any source. Once a NetworkPolicy selects a pod, that pod becomes isolated and only accepts connections allowed by NetworkPolicy rules. Network policies require a CNI plugin that supports them (Calico, Cilium, Weave Net). Flannel does not support network policies natively. Example: restrict a database pod to only accept connections from the application tier:\n\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: db-restrict\nspec:\n  podSelector:\n    matchLabels:\n      app: database\n  ingress:\n  - from:\n    - podSelector:\n        matchLabels:\n          tier: application\n    ports:\n    - protocol: TCP\n      port: 5432",
+    "score": 0.78,
+    "metadata": {
+      "source": "network-policies.md"
+    }
+  },
+  {
+    "content": "DNS resolution in Kubernetes is handled by CoreDNS, which runs as a deployment in the kube-system namespace. Every Service gets a DNS entry: <service-name>.<namespace>.svc.cluster.local. Pods can reach services by their short name within the same namespace, or by the fully qualified domain name across namespaces. CoreDNS also supports custom DNS entries, upstream DNS forwarding, and caching. For pod-to-pod communication without a Service, pods can use the pod's IP directly, but this is fragile since pod IPs change on restart.",
+    "score": 0.72,
+    "metadata": {
+      "source": "k8s-dns.md"
+    }
+  },
+  {
+    "content": "Ingress controllers manage external access to services in a Kubernetes cluster. An Ingress resource defines rules for routing HTTP(S) traffic to services. Popular ingress controllers include: NGINX Ingress Controller (most widely used, supports path-based and host-based routing), AWS ALB Ingress Controller (integrates with AWS Application Load Balancers), Traefik (automatic HTTPS with Let's Encrypt), and Istio Ingress Gateway (part of the Istio service mesh). The ingress controller watches for Ingress resources and configures the underlying load balancer accordingly.",
+    "score": 0.68,
+    "metadata": {
+      "source": "ingress-guide.md"
+    }
+  },
+  {
+    "content": "Pod networking in Kubernetes relies on the Container Network Interface (CNI) specification. When the kubelet starts a pod, it invokes the configured CNI plugin to set up the pod's network namespace. The CNI plugin is responsible for: allocating an IP address to the pod from the cluster's pod CIDR range, creating virtual network interfaces (veth pairs), configuring routing tables so pods on different nodes can communicate, and enforcing network policies if supported. Without a CNI plugin, pods cannot communicate with each other or with external networks.",
+    "score": 0.88,
+    "metadata": {
+      "source": "pod-networking-internals.md"
+    }
+  },
+  {
+    "content": "Service mesh solutions like Istio and Linkerd add a layer of infrastructure between services in a Kubernetes cluster. A service mesh provides: mutual TLS (mTLS) for encrypted service-to-service communication, traffic management (canary deployments, circuit breaking, retries), observability (distributed tracing, metrics, access logs), and fine-grained traffic policies. The mesh works by injecting a sidecar proxy (Envoy in Istio, linkerd-proxy in Linkerd) into each pod. All traffic to and from the pod flows through this proxy, enabling transparent encryption, load balancing, and telemetry collection.",
+    "score": 0.55,
+    "metadata": {
+      "source": "service-mesh-overview.md"
+    }
+  },
+  {
+    "content": "Calico is one of the most popular CNI plugins for Kubernetes. It provides both networking and network security using standard Linux networking tools. Calico can operate in two modes: direct routing (using BGP to distribute routes between nodes \u2014 no overlay, best performance) and VXLAN overlay (encapsulates packets for environments where BGP isn't available, like some cloud providers). Calico's network policy engine extends Kubernetes NetworkPolicy with additional features: global network policies, DNS-based policies, and application layer (L7) policies. For large clusters (1000+ nodes), Calico with BGP is the recommended choice due to its scalability and performance characteristics.",
+    "score": 0.82,
+    "metadata": {
+      "source": "calico-guide.md"
+    }
+  },
+  {
+    "content": "Troubleshooting Kubernetes networking issues requires understanding the network stack. Common issues and debugging steps: 1) Pod can't reach another pod \u2014 check CNI plugin status, verify pod CIDR allocation, test with 'kubectl exec' into a pod and ping another pod's IP. 2) Service not routing traffic \u2014 verify endpoints with 'kubectl get endpoints', check kube-proxy logs, verify iptables/IPVS rules. 3) DNS resolution failing \u2014 check CoreDNS pods are running, test with 'nslookup' from a debug pod, verify /etc/resolv.conf in pods. 4) External traffic not reaching pods \u2014 verify Ingress controller is running, check Ingress resource configuration, verify LoadBalancer provisioning.",
+    "score": 0.75,
+    "metadata": {
+      "source": "k8s-networking-troubleshooting.md"
+    }
+  },
+  {
+    "content": "eBPF (extended Berkeley Packet Filter) is revolutionizing Kubernetes networking. Cilium, the leading eBPF-based CNI plugin, uses eBPF programs attached to the Linux kernel to process network packets at near-wire speed without the overhead of iptables rules. Benefits of eBPF-based networking: 10x faster than iptables for large rule sets, transparent encryption without sidecar proxies, L7 visibility into HTTP/gRPC/Kafka traffic, identity-based security policies (not just IP-based), and Hubble for real-time network observability. eBPF requires a modern Linux kernel (5.4+) and is becoming the de facto standard for high-performance Kubernetes networking.",
+    "score": 0.65,
+    "metadata": {
+      "source": "ebpf-networking.md"
+    }
+  },
+  {
+    "content": "Multi-cluster Kubernetes networking enables services in different clusters to communicate. Approaches include: Submariner (creates encrypted tunnels between clusters, supports service discovery across clusters), Cilium ClusterMesh (extends Cilium's eBPF networking across multiple clusters), Istio multi-cluster (uses Istio's service mesh to route traffic between clusters), and DNS-based federation (simple approach using external DNS to route between clusters). Multi-cluster networking is complex and should only be adopted when there's a clear need for geographic distribution, blast radius isolation, or compliance requirements.",
+    "score": 0.42,
+    "metadata": {
+      "source": "multi-cluster.md"
+    }
+  },
+  {
+    "content": "IPv6 support in Kubernetes has been stable since version 1.23. Kubernetes supports dual-stack networking, where pods and services can have both IPv4 and IPv6 addresses. To enable dual-stack: configure the cluster CIDR for both address families, enable the IPv6DualStack feature gate (default on since 1.23), and ensure your CNI plugin supports dual-stack (Calico and Cilium both do). Services can be configured as IPv4-only, IPv6-only, or dual-stack. For new deployments, dual-stack is recommended to future-proof your cluster.",
+    "score": 0.48,
+    "metadata": {
+      "source": "ipv6-k8s.md"
+    }
+  },
+  {
+    "content": "Network performance tuning for Kubernetes involves several layers. At the node level: increase the maximum number of connections (sysctl net.core.somaxconn), tune TCP buffer sizes, and enable TCP BBR congestion control. At the pod level: set appropriate resource requests to avoid CPU throttling during packet processing, use host networking for latency-sensitive workloads, and consider DPDK or SR-IOV for ultra-high-performance networking. At the CNI level: choose direct routing over overlay when possible, tune MTU sizes to avoid fragmentation, and use eBPF-based CNI (Cilium) for large clusters with many network policies.",
+    "score": 0.58,
+    "metadata": {
+      "source": "network-performance.md"
+    }
+  },
+  {
+    "content": "Kubernetes Pod Networking: Every pod in a Kubernetes cluster gets its own unique IP address. This means you don't need to worry about port conflicts between pods, and pods can be treated much like VMs or physical hosts from a networking perspective. Pods on a node can communicate with all pods on all nodes without NAT. Agents on a node (e.g., system daemons, kubelet) can communicate with all pods on that node. The Kubernetes networking model is flat \u2014 all pods see each other's IP addresses directly. This is implemented by the Container Network Interface (CNI) plugin that the cluster administrator chooses during cluster setup. Popular CNI plugins include Calico, Cilium, Flannel, and Weave Net. Each implements the flat networking model differently using technologies like VXLAN overlays, BGP routing, or eBPF.",
+    "score": 0.95,
+    "metadata": {
+      "source": "k8s-networking-guide.md",
+      "section": "Overview"
+    }
+  },
+  {
+    "content": "CNI (Container Network Interface) plugins are responsible for connecting container network namespaces to the host network. When a pod is created, the kubelet calls the CNI plugin to set up networking for that pod. The CNI plugin assigns an IP address from a configured CIDR range, creates a virtual ethernet pair (veth), and sets up routing rules. Popular CNI plugins for Kubernetes include: Calico (uses BGP for routing, supports network policies, no overlay by default), Cilium (uses eBPF for high-performance networking and security, supports L7 network policies), Flannel (simple overlay network using VXLAN, easy to set up but fewer features), and Weave Net (mesh overlay network with encryption support). The choice of CNI plugin affects network performance, security capabilities, and operational complexity.",
+    "score": 0.92,
+    "metadata": {
+      "source": "cni-deep-dive.md"
+    }
+  },
+  {
+    "content": "Container Network Interface (CNI) is the standard for configuring network interfaces in Linux containers. In Kubernetes, CNI plugins handle pod-to-pod communication. The most widely used CNI plugins are Calico, Cilium, and Flannel. Calico provides networking and network policy enforcement using BGP routing, making it popular for large-scale deployments. Cilium leverages eBPF technology in the Linux kernel for highly efficient packet processing and advanced security features. Flannel is the simplest option, creating a VXLAN overlay network that works well for small to medium clusters. Each CNI plugin has trade-offs between performance, features, and complexity.",
+    "score": 0.9,
+    "metadata": {
+      "source": "k8s-cni-comparison.md"
+    }
+  },
+  {
+    "content": "Kubernetes Services provide a stable network endpoint for a set of pods. A Service gets a cluster-internal IP address (ClusterIP) that doesn't change even when the underlying pods are replaced. Kube-proxy, running on every node, maintains iptables or IPVS rules that route traffic destined for a Service's ClusterIP to one of the healthy backend pods. Service types include: ClusterIP (internal only, default), NodePort (exposes on a static port on each node), LoadBalancer (provisions an external load balancer), and ExternalName (maps to a DNS name). For most internal communication between microservices, ClusterIP is the right choice.",
+    "score": 0.85,
+    "metadata": {
+      "source": "k8s-services.md"
+    }
+  },
+  {
+    "content": "Network Policies in Kubernetes allow you to control traffic flow at the IP address or port level. By default, pods are non-isolated \u2014 they accept traffic from any source. Once a NetworkPolicy selects a pod, that pod becomes isolated and only accepts connections allowed by NetworkPolicy rules. Network policies require a CNI plugin that supports them (Calico, Cilium, Weave Net). Flannel does not support network policies natively. Example: restrict a database pod to only accept connections from the application tier:\n\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: db-restrict\nspec:\n  podSelector:\n    matchLabels:\n      app: database\n  ingress:\n  - from:\n    - podSelector:\n        matchLabels:\n          tier: application\n    ports:\n    - protocol: TCP\n      port: 5432",
+    "score": 0.78,
+    "metadata": {
+      "source": "network-policies.md"
+    }
+  },
+  {
+    "content": "DNS resolution in Kubernetes is handled by CoreDNS, which runs as a deployment in the kube-system namespace. Every Service gets a DNS entry: <service-name>.<namespace>.svc.cluster.local. Pods can reach services by their short name within the same namespace, or by the fully qualified domain name across namespaces. CoreDNS also supports custom DNS entries, upstream DNS forwarding, and caching. For pod-to-pod communication without a Service, pods can use the pod's IP directly, but this is fragile since pod IPs change on restart.",
+    "score": 0.72,
+    "metadata": {
+      "source": "k8s-dns.md"
+    }
+  },
+  {
+    "content": "Ingress controllers manage external access to services in a Kubernetes cluster. An Ingress resource defines rules for routing HTTP(S) traffic to services. Popular ingress controllers include: NGINX Ingress Controller (most widely used, supports path-based and host-based routing), AWS ALB Ingress Controller (integrates with AWS Application Load Balancers), Traefik (automatic HTTPS with Let's Encrypt), and Istio Ingress Gateway (part of the Istio service mesh). The ingress controller watches for Ingress resources and configures the underlying load balancer accordingly.",
+    "score": 0.68,
+    "metadata": {
+      "source": "ingress-guide.md"
+    }
+  },
+  {
+    "content": "Pod networking in Kubernetes relies on the Container Network Interface (CNI) specification. When the kubelet starts a pod, it invokes the configured CNI plugin to set up the pod's network namespace. The CNI plugin is responsible for: allocating an IP address to the pod from the cluster's pod CIDR range, creating virtual network interfaces (veth pairs), configuring routing tables so pods on different nodes can communicate, and enforcing network policies if supported. Without a CNI plugin, pods cannot communicate with each other or with external networks.",
+    "score": 0.88,
+    "metadata": {
+      "source": "pod-networking-internals.md"
+    }
+  },
+  {
+    "content": "Service mesh solutions like Istio and Linkerd add a layer of infrastructure between services in a Kubernetes cluster. A service mesh provides: mutual TLS (mTLS) for encrypted service-to-service communication, traffic management (canary deployments, circuit breaking, retries), observability (distributed tracing, metrics, access logs), and fine-grained traffic policies. The mesh works by injecting a sidecar proxy (Envoy in Istio, linkerd-proxy in Linkerd) into each pod. All traffic to and from the pod flows through this proxy, enabling transparent encryption, load balancing, and telemetry collection.",
+    "score": 0.55,
+    "metadata": {
+      "source": "service-mesh-overview.md"
+    }
+  },
+  {
+    "content": "Calico is one of the most popular CNI plugins for Kubernetes. It provides both networking and network security using standard Linux networking tools. Calico can operate in two modes: direct routing (using BGP to distribute routes between nodes \u2014 no overlay, best performance) and VXLAN overlay (encapsulates packets for environments where BGP isn't available, like some cloud providers). Calico's network policy engine extends Kubernetes NetworkPolicy with additional features: global network policies, DNS-based policies, and application layer (L7) policies. For large clusters (1000+ nodes), Calico with BGP is the recommended choice due to its scalability and performance characteristics.",
+    "score": 0.82,
+    "metadata": {
+      "source": "calico-guide.md"
+    }
+  },
+  {
+    "content": "Troubleshooting Kubernetes networking issues requires understanding the network stack. Common issues and debugging steps: 1) Pod can't reach another pod \u2014 check CNI plugin status, verify pod CIDR allocation, test with 'kubectl exec' into a pod and ping another pod's IP. 2) Service not routing traffic \u2014 verify endpoints with 'kubectl get endpoints', check kube-proxy logs, verify iptables/IPVS rules. 3) DNS resolution failing \u2014 check CoreDNS pods are running, test with 'nslookup' from a debug pod, verify /etc/resolv.conf in pods. 4) External traffic not reaching pods \u2014 verify Ingress controller is running, check Ingress resource configuration, verify LoadBalancer provisioning.",
+    "score": 0.75,
+    "metadata": {
+      "source": "k8s-networking-troubleshooting.md"
+    }
+  },
+  {
+    "content": "eBPF (extended Berkeley Packet Filter) is revolutionizing Kubernetes networking. Cilium, the leading eBPF-based CNI plugin, uses eBPF programs attached to the Linux kernel to process network packets at near-wire speed without the overhead of iptables rules. Benefits of eBPF-based networking: 10x faster than iptables for large rule sets, transparent encryption without sidecar proxies, L7 visibility into HTTP/gRPC/Kafka traffic, identity-based security policies (not just IP-based), and Hubble for real-time network observability. eBPF requires a modern Linux kernel (5.4+) and is becoming the de facto standard for high-performance Kubernetes networking.",
+    "score": 0.65,
+    "metadata": {
+      "source": "ebpf-networking.md"
+    }
+  },
+  {
+    "content": "Multi-cluster Kubernetes networking enables services in different clusters to communicate. Approaches include: Submariner (creates encrypted tunnels between clusters, supports service discovery across clusters), Cilium ClusterMesh (extends Cilium's eBPF networking across multiple clusters), Istio multi-cluster (uses Istio's service mesh to route traffic between clusters), and DNS-based federation (simple approach using external DNS to route between clusters). Multi-cluster networking is complex and should only be adopted when there's a clear need for geographic distribution, blast radius isolation, or compliance requirements.",
+    "score": 0.42,
+    "metadata": {
+      "source": "multi-cluster.md"
+    }
+  },
+  {
+    "content": "IPv6 support in Kubernetes has been stable since version 1.23. Kubernetes supports dual-stack networking, where pods and services can have both IPv4 and IPv6 addresses. To enable dual-stack: configure the cluster CIDR for both address families, enable the IPv6DualStack feature gate (default on since 1.23), and ensure your CNI plugin supports dual-stack (Calico and Cilium both do). Services can be configured as IPv4-only, IPv6-only, or dual-stack. For new deployments, dual-stack is recommended to future-proof your cluster.",
+    "score": 0.48,
+    "metadata": {
+      "source": "ipv6-k8s.md"
+    }
+  },
+  {
+    "content": "Network performance tuning for Kubernetes involves several layers. At the node level: increase the maximum number of connections (sysctl net.core.somaxconn), tune TCP buffer sizes, and enable TCP BBR congestion control. At the pod level: set appropriate resource requests to avoid CPU throttling during packet processing, use host networking for latency-sensitive workloads, and consider DPDK or SR-IOV for ultra-high-performance networking. At the CNI level: choose direct routing over overlay when possible, tune MTU sizes to avoid fragmentation, and use eBPF-based CNI (Cilium) for large clusters with many network policies.",
+    "score": 0.58,
+    "metadata": {
+      "source": "network-performance.md"
+    }
+  },
+  {
+    "content": "Kubernetes Pod Networking: Every pod in a Kubernetes cluster gets its own unique IP address. This means you don't need to worry about port conflicts between pods, and pods can be treated much like VMs or physical hosts from a networking perspective. Pods on a node can communicate with all pods on all nodes without NAT. Agents on a node (e.g., system daemons, kubelet) can communicate with all pods on that node. The Kubernetes networking model is flat \u2014 all pods see each other's IP addresses directly. This is implemented by the Container Network Interface (CNI) plugin that the cluster administrator chooses during cluster setup. Popular CNI plugins include Calico, Cilium, Flannel, and Weave Net. Each implements the flat networking model differently using technologies like VXLAN overlays, BGP routing, or eBPF.",
+    "score": 0.95,
+    "metadata": {
+      "source": "k8s-networking-guide.md",
+      "section": "Overview"
+    }
+  },
+  {
+    "content": "CNI (Container Network Interface) plugins are responsible for connecting container network namespaces to the host network. When a pod is created, the kubelet calls the CNI plugin to set up networking for that pod. The CNI plugin assigns an IP address from a configured CIDR range, creates a virtual ethernet pair (veth), and sets up routing rules. Popular CNI plugins for Kubernetes include: Calico (uses BGP for routing, supports network policies, no overlay by default), Cilium (uses eBPF for high-performance networking and security, supports L7 network policies), Flannel (simple overlay network using VXLAN, easy to set up but fewer features), and Weave Net (mesh overlay network with encryption support). The choice of CNI plugin affects network performance, security capabilities, and operational complexity.",
+    "score": 0.92,
+    "metadata": {
+      "source": "cni-deep-dive.md"
+    }
+  },
+  {
+    "content": "Container Network Interface (CNI) is the standard for configuring network interfaces in Linux containers. In Kubernetes, CNI plugins handle pod-to-pod communication. The most widely used CNI plugins are Calico, Cilium, and Flannel. Calico provides networking and network policy enforcement using BGP routing, making it popular for large-scale deployments. Cilium leverages eBPF technology in the Linux kernel for highly efficient packet processing and advanced security features. Flannel is the simplest option, creating a VXLAN overlay network that works well for small to medium clusters. Each CNI plugin has trade-offs between performance, features, and complexity.",
+    "score": 0.9,
+    "metadata": {
+      "source": "k8s-cni-comparison.md"
+    }
+  },
+  {
+    "content": "Kubernetes Services provide a stable network endpoint for a set of pods. A Service gets a cluster-internal IP address (ClusterIP) that doesn't change even when the underlying pods are replaced. Kube-proxy, running on every node, maintains iptables or IPVS rules that route traffic destined for a Service's ClusterIP to one of the healthy backend pods. Service types include: ClusterIP (internal only, default), NodePort (exposes on a static port on each node), LoadBalancer (provisions an external load balancer), and ExternalName (maps to a DNS name). For most internal communication between microservices, ClusterIP is the right choice.",
+    "score": 0.85,
+    "metadata": {
+      "source": "k8s-services.md"
+    }
+  },
+  {
+    "content": "Network Policies in Kubernetes allow you to control traffic flow at the IP address or port level. By default, pods are non-isolated \u2014 they accept traffic from any source. Once a NetworkPolicy selects a pod, that pod becomes isolated and only accepts connections allowed by NetworkPolicy rules. Network policies require a CNI plugin that supports them (Calico, Cilium, Weave Net). Flannel does not support network policies natively. Example: restrict a database pod to only accept connections from the application tier:\n\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: db-restrict\nspec:\n  podSelector:\n    matchLabels:\n      app: database\n  ingress:\n  - from:\n    - podSelector:\n        matchLabels:\n          tier: application\n    ports:\n    - protocol: TCP\n      port: 5432",
+    "score": 0.78,
+    "metadata": {
+      "source": "network-policies.md"
+    }
+  },
+  {
+    "content": "DNS resolution in Kubernetes is handled by CoreDNS, which runs as a deployment in the kube-system namespace. Every Service gets a DNS entry: <service-name>.<namespace>.svc.cluster.local. Pods can reach services by their short name within the same namespace, or by the fully qualified domain name across namespaces. CoreDNS also supports custom DNS entries, upstream DNS forwarding, and caching. For pod-to-pod communication without a Service, pods can use the pod's IP directly, but this is fragile since pod IPs change on restart.",
+    "score": 0.72,
+    "metadata": {
+      "source": "k8s-dns.md"
+    }
+  },
+  {
+    "content": "Ingress controllers manage external access to services in a Kubernetes cluster. An Ingress resource defines rules for routing HTTP(S) traffic to services. Popular ingress controllers include: NGINX Ingress Controller (most widely used, supports path-based and host-based routing), AWS ALB Ingress Controller (integrates with AWS Application Load Balancers), Traefik (automatic HTTPS with Let's Encrypt), and Istio Ingress Gateway (part of the Istio service mesh). The ingress controller watches for Ingress resources and configures the underlying load balancer accordingly.",
+    "score": 0.68,
+    "metadata": {
+      "source": "ingress-guide.md"
+    }
+  },
+  {
+    "content": "Pod networking in Kubernetes relies on the Container Network Interface (CNI) specification. When the kubelet starts a pod, it invokes the configured CNI plugin to set up the pod's network namespace. The CNI plugin is responsible for: allocating an IP address to the pod from the cluster's pod CIDR range, creating virtual network interfaces (veth pairs), configuring routing tables so pods on different nodes can communicate, and enforcing network policies if supported. Without a CNI plugin, pods cannot communicate with each other or with external networks.",
+    "score": 0.88,
+    "metadata": {
+      "source": "pod-networking-internals.md"
+    }
+  },
+  {
+    "content": "Service mesh solutions like Istio and Linkerd add a layer of infrastructure between services in a Kubernetes cluster. A service mesh provides: mutual TLS (mTLS) for encrypted service-to-service communication, traffic management (canary deployments, circuit breaking, retries), observability (distributed tracing, metrics, access logs), and fine-grained traffic policies. The mesh works by injecting a sidecar proxy (Envoy in Istio, linkerd-proxy in Linkerd) into each pod. All traffic to and from the pod flows through this proxy, enabling transparent encryption, load balancing, and telemetry collection.",
+    "score": 0.55,
+    "metadata": {
+      "source": "service-mesh-overview.md"
+    }
+  },
+  {
+    "content": "Calico is one of the most popular CNI plugins for Kubernetes. It provides both networking and network security using standard Linux networking tools. Calico can operate in two modes: direct routing (using BGP to distribute routes between nodes \u2014 no overlay, best performance) and VXLAN overlay (encapsulates packets for environments where BGP isn't available, like some cloud providers). Calico's network policy engine extends Kubernetes NetworkPolicy with additional features: global network policies, DNS-based policies, and application layer (L7) policies. For large clusters (1000+ nodes), Calico with BGP is the recommended choice due to its scalability and performance characteristics.",
+    "score": 0.82,
+    "metadata": {
+      "source": "calico-guide.md"
+    }
+  },
+  {
+    "content": "Troubleshooting Kubernetes networking issues requires understanding the network stack. Common issues and debugging steps: 1) Pod can't reach another pod \u2014 check CNI plugin status, verify pod CIDR allocation, test with 'kubectl exec' into a pod and ping another pod's IP. 2) Service not routing traffic \u2014 verify endpoints with 'kubectl get endpoints', check kube-proxy logs, verify iptables/IPVS rules. 3) DNS resolution failing \u2014 check CoreDNS pods are running, test with 'nslookup' from a debug pod, verify /etc/resolv.conf in pods. 4) External traffic not reaching pods \u2014 verify Ingress controller is running, check Ingress resource configuration, verify LoadBalancer provisioning.",
+    "score": 0.75,
+    "metadata": {
+      "source": "k8s-networking-troubleshooting.md"
+    }
+  },
+  {
+    "content": "eBPF (extended Berkeley Packet Filter) is revolutionizing Kubernetes networking. Cilium, the leading eBPF-based CNI plugin, uses eBPF programs attached to the Linux kernel to process network packets at near-wire speed without the overhead of iptables rules. Benefits of eBPF-based networking: 10x faster than iptables for large rule sets, transparent encryption without sidecar proxies, L7 visibility into HTTP/gRPC/Kafka traffic, identity-based security policies (not just IP-based), and Hubble for real-time network observability. eBPF requires a modern Linux kernel (5.4+) and is becoming the de facto standard for high-performance Kubernetes networking.",
+    "score": 0.65,
+    "metadata": {
+      "source": "ebpf-networking.md"
+    }
+  },
+  {
+    "content": "Multi-cluster Kubernetes networking enables services in different clusters to communicate. Approaches include: Submariner (creates encrypted tunnels between clusters, supports service discovery across clusters), Cilium ClusterMesh (extends Cilium's eBPF networking across multiple clusters), Istio multi-cluster (uses Istio's service mesh to route traffic between clusters), and DNS-based federation (simple approach using external DNS to route between clusters). Multi-cluster networking is complex and should only be adopted when there's a clear need for geographic distribution, blast radius isolation, or compliance requirements.",
+    "score": 0.42,
+    "metadata": {
+      "source": "multi-cluster.md"
+    }
+  },
+  {
+    "content": "IPv6 support in Kubernetes has been stable since version 1.23. Kubernetes supports dual-stack networking, where pods and services can have both IPv4 and IPv6 addresses. To enable dual-stack: configure the cluster CIDR for both address families, enable the IPv6DualStack feature gate (default on since 1.23), and ensure your CNI plugin supports dual-stack (Calico and Cilium both do). Services can be configured as IPv4-only, IPv6-only, or dual-stack. For new deployments, dual-stack is recommended to future-proof your cluster.",
+    "score": 0.48,
+    "metadata": {
+      "source": "ipv6-k8s.md"
+    }
+  },
+  {
+    "content": "Network performance tuning for Kubernetes involves several layers. At the node level: increase the maximum number of connections (sysctl net.core.somaxconn), tune TCP buffer sizes, and enable TCP BBR congestion control. At the pod level: set appropriate resource requests to avoid CPU throttling during packet processing, use host networking for latency-sensitive workloads, and consider DPDK or SR-IOV for ultra-high-performance networking. At the CNI level: choose direct routing over overlay when possible, tune MTU sizes to avoid fragmentation, and use eBPF-based CNI (Cilium) for large clusters with many network policies.",
+    "score": 0.58,
+    "metadata": {
+      "source": "network-performance.md"
+    }
+  },
+  {
+    "content": "Kubernetes Pod Networking: Every pod in a Kubernetes cluster gets its own unique IP address. This means you don't need to worry about port conflicts between pods, and pods can be treated much like VMs or physical hosts from a networking perspective. Pods on a node can communicate with all pods on all nodes without NAT. Agents on a node (e.g., system daemons, kubelet) can communicate with all pods on that node. The Kubernetes networking model is flat \u2014 all pods see each other's IP addresses directly. This is implemented by the Container Network Interface (CNI) plugin that the cluster administrator chooses during cluster setup. Popular CNI plugins include Calico, Cilium, Flannel, and Weave Net. Each implements the flat networking model differently using technologies like VXLAN overlays, BGP routing, or eBPF.",
+    "score": 0.95,
+    "metadata": {
+      "source": "k8s-networking-guide.md",
+      "section": "Overview"
+    }
+  },
+  {
+    "content": "CNI (Container Network Interface) plugins are responsible for connecting container network namespaces to the host network. When a pod is created, the kubelet calls the CNI plugin to set up networking for that pod. The CNI plugin assigns an IP address from a configured CIDR range, creates a virtual ethernet pair (veth), and sets up routing rules. Popular CNI plugins for Kubernetes include: Calico (uses BGP for routing, supports network policies, no overlay by default), Cilium (uses eBPF for high-performance networking and security, supports L7 network policies), Flannel (simple overlay network using VXLAN, easy to set up but fewer features), and Weave Net (mesh overlay network with encryption support). The choice of CNI plugin affects network performance, security capabilities, and operational complexity.",
+    "score": 0.92,
+    "metadata": {
+      "source": "cni-deep-dive.md"
+    }
+  },
+  {
+    "content": "Container Network Interface (CNI) is the standard for configuring network interfaces in Linux containers. In Kubernetes, CNI plugins handle pod-to-pod communication. The most widely used CNI plugins are Calico, Cilium, and Flannel. Calico provides networking and network policy enforcement using BGP routing, making it popular for large-scale deployments. Cilium leverages eBPF technology in the Linux kernel for highly efficient packet processing and advanced security features. Flannel is the simplest option, creating a VXLAN overlay network that works well for small to medium clusters. Each CNI plugin has trade-offs between performance, features, and complexity.",
+    "score": 0.9,
+    "metadata": {
+      "source": "k8s-cni-comparison.md"
+    }
+  },
+  {
+    "content": "Kubernetes Services provide a stable network endpoint for a set of pods. A Service gets a cluster-internal IP address (ClusterIP) that doesn't change even when the underlying pods are replaced. Kube-proxy, running on every node, maintains iptables or IPVS rules that route traffic destined for a Service's ClusterIP to one of the healthy backend pods. Service types include: ClusterIP (internal only, default), NodePort (exposes on a static port on each node), LoadBalancer (provisions an external load balancer), and ExternalName (maps to a DNS name). For most internal communication between microservices, ClusterIP is the right choice.",
+    "score": 0.85,
+    "metadata": {
+      "source": "k8s-services.md"
+    }
+  },
+  {
+    "content": "Network Policies in Kubernetes allow you to control traffic flow at the IP address or port level. By default, pods are non-isolated \u2014 they accept traffic from any source. Once a NetworkPolicy selects a pod, that pod becomes isolated and only accepts connections allowed by NetworkPolicy rules. Network policies require a CNI plugin that supports them (Calico, Cilium, Weave Net). Flannel does not support network policies natively. Example: restrict a database pod to only accept connections from the application tier:\n\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: db-restrict\nspec:\n  podSelector:\n    matchLabels:\n      app: database\n  ingress:\n  - from:\n    - podSelector:\n        matchLabels:\n          tier: application\n    ports:\n    - protocol: TCP\n      port: 5432",
+    "score": 0.78,
+    "metadata": {
+      "source": "network-policies.md"
+    }
+  },
+  {
+    "content": "DNS resolution in Kubernetes is handled by CoreDNS, which runs as a deployment in the kube-system namespace. Every Service gets a DNS entry: <service-name>.<namespace>.svc.cluster.local. Pods can reach services by their short name within the same namespace, or by the fully qualified domain name across namespaces. CoreDNS also supports custom DNS entries, upstream DNS forwarding, and caching. For pod-to-pod communication without a Service, pods can use the pod's IP directly, but this is fragile since pod IPs change on restart.",
+    "score": 0.72,
+    "metadata": {
+      "source": "k8s-dns.md"
+    }
+  },
+  {
+    "content": "Ingress controllers manage external access to services in a Kubernetes cluster. An Ingress resource defines rules for routing HTTP(S) traffic to services. Popular ingress controllers include: NGINX Ingress Controller (most widely used, supports path-based and host-based routing), AWS ALB Ingress Controller (integrates with AWS Application Load Balancers), Traefik (automatic HTTPS with Let's Encrypt), and Istio Ingress Gateway (part of the Istio service mesh). The ingress controller watches for Ingress resources and configures the underlying load balancer accordingly.",
+    "score": 0.68,
+    "metadata": {
+      "source": "ingress-guide.md"
+    }
+  },
+  {
+    "content": "Pod networking in Kubernetes relies on the Container Network Interface (CNI) specification. When the kubelet starts a pod, it invokes the configured CNI plugin to set up the pod's network namespace. The CNI plugin is responsible for: allocating an IP address to the pod from the cluster's pod CIDR range, creating virtual network interfaces (veth pairs), configuring routing tables so pods on different nodes can communicate, and enforcing network policies if supported. Without a CNI plugin, pods cannot communicate with each other or with external networks.",
+    "score": 0.88,
+    "metadata": {
+      "source": "pod-networking-internals.md"
+    }
+  },
+  {
+    "content": "Service mesh solutions like Istio and Linkerd add a layer of infrastructure between services in a Kubernetes cluster. A service mesh provides: mutual TLS (mTLS) for encrypted service-to-service communication, traffic management (canary deployments, circuit breaking, retries), observability (distributed tracing, metrics, access logs), and fine-grained traffic policies. The mesh works by injecting a sidecar proxy (Envoy in Istio, linkerd-proxy in Linkerd) into each pod. All traffic to and from the pod flows through this proxy, enabling transparent encryption, load balancing, and telemetry collection.",
+    "score": 0.55,
+    "metadata": {
+      "source": "service-mesh-overview.md"
+    }
+  },
+  {
+    "content": "Calico is one of the most popular CNI plugins for Kubernetes. It provides both networking and network security using standard Linux networking tools. Calico can operate in two modes: direct routing (using BGP to distribute routes between nodes \u2014 no overlay, best performance) and VXLAN overlay (encapsulates packets for environments where BGP isn't available, like some cloud providers). Calico's network policy engine extends Kubernetes NetworkPolicy with additional features: global network policies, DNS-based policies, and application layer (L7) policies. For large clusters (1000+ nodes), Calico with BGP is the recommended choice due to its scalability and performance characteristics.",
+    "score": 0.82,
+    "metadata": {
+      "source": "calico-guide.md"
+    }
+  },
+  {
+    "content": "Troubleshooting Kubernetes networking issues requires understanding the network stack. Common issues and debugging steps: 1) Pod can't reach another pod \u2014 check CNI plugin status, verify pod CIDR allocation, test with 'kubectl exec' into a pod and ping another pod's IP. 2) Service not routing traffic \u2014 verify endpoints with 'kubectl get endpoints', check kube-proxy logs, verify iptables/IPVS rules. 3) DNS resolution failing \u2014 check CoreDNS pods are running, test with 'nslookup' from a debug pod, verify /etc/resolv.conf in pods. 4) External traffic not reaching pods \u2014 verify Ingress controller is running, check Ingress resource configuration, verify LoadBalancer provisioning.",
+    "score": 0.75,
+    "metadata": {
+      "source": "k8s-networking-troubleshooting.md"
+    }
+  },
+  {
+    "content": "eBPF (extended Berkeley Packet Filter) is revolutionizing Kubernetes networking. Cilium, the leading eBPF-based CNI plugin, uses eBPF programs attached to the Linux kernel to process network packets at near-wire speed without the overhead of iptables rules. Benefits of eBPF-based networking: 10x faster than iptables for large rule sets, transparent encryption without sidecar proxies, L7 visibility into HTTP/gRPC/Kafka traffic, identity-based security policies (not just IP-based), and Hubble for real-time network observability. eBPF requires a modern Linux kernel (5.4+) and is becoming the de facto standard for high-performance Kubernetes networking.",
+    "score": 0.65,
+    "metadata": {
+      "source": "ebpf-networking.md"
+    }
+  },
+  {
+    "content": "Multi-cluster Kubernetes networking enables services in different clusters to communicate. Approaches include: Submariner (creates encrypted tunnels between clusters, supports service discovery across clusters), Cilium ClusterMesh (extends Cilium's eBPF networking across multiple clusters), Istio multi-cluster (uses Istio's service mesh to route traffic between clusters), and DNS-based federation (simple approach using external DNS to route between clusters). Multi-cluster networking is complex and should only be adopted when there's a clear need for geographic distribution, blast radius isolation, or compliance requirements.",
+    "score": 0.42,
+    "metadata": {
+      "source": "multi-cluster.md"
+    }
+  },
+  {
+    "content": "IPv6 support in Kubernetes has been stable since version 1.23. Kubernetes supports dual-stack networking, where pods and services can have both IPv4 and IPv6 addresses. To enable dual-stack: configure the cluster CIDR for both address families, enable the IPv6DualStack feature gate (default on since 1.23), and ensure your CNI plugin supports dual-stack (Calico and Cilium both do). Services can be configured as IPv4-only, IPv6-only, or dual-stack. For new deployments, dual-stack is recommended to future-proof your cluster.",
+    "score": 0.48,
+    "metadata": {
+      "source": "ipv6-k8s.md"
+    }
+  },
+  {
+    "content": "Network performance tuning for Kubernetes involves several layers. At the node level: increase the maximum number of connections (sysctl net.core.somaxconn), tune TCP buffer sizes, and enable TCP BBR congestion control. At the pod level: set appropriate resource requests to avoid CPU throttling during packet processing, use host networking for latency-sensitive workloads, and consider DPDK or SR-IOV for ultra-high-performance networking. At the CNI level: choose direct routing over overlay when possible, tune MTU sizes to avoid fragmentation, and use eBPF-based CNI (Cilium) for large clusters with many network policies.",
+    "score": 0.58,
+    "metadata": {
+      "source": "network-performance.md"
+    }
+  }
+]
