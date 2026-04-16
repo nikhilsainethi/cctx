@@ -103,6 +103,13 @@ enum Commands {
         /// Sentences scoring below this are removed.
         #[arg(long, default_value_t = 0.3)]
         prune_threshold: f64,
+        /// LLM provider for summarization: ollama or openai.
+        /// Requires: cargo build --features llm
+        #[arg(long)]
+        llm_provider: Option<String>,
+        /// Override the default LLM model.
+        #[arg(long)]
+        llm_model: Option<String>,
     },
 
     /// Compress context to fit a hard token budget.
@@ -235,10 +242,13 @@ fn main() -> Result<()> {
             embedding_provider,
             dedup_threshold,
             prune_threshold,
+            llm_provider,
+            llm_model,
         } => {
             let raw = read_input(&file)?;
             let ctx = build_context(&raw, input_format.to_lib())?;
-            let provider = make_embedding_provider(embedding_provider.as_deref())?;
+            let emb_provider = make_embedding_provider(embedding_provider.as_deref())?;
+            let llm = make_llm_provider_opt(llm_provider.as_deref(), llm_model.as_deref())?;
             cmd_optimize(
                 ctx,
                 strategy,
@@ -246,9 +256,10 @@ fn main() -> Result<()> {
                 query,
                 budget,
                 &output,
-                provider,
+                emb_provider,
                 dedup_threshold,
                 prune_threshold,
+                llm,
             )
         }
         Commands::Compress {
@@ -419,6 +430,7 @@ fn cmd_optimize(
     embedding_provider: Option<std::sync::Arc<dyn cctx::embeddings::EmbeddingProvider>>,
     dedup_threshold: f64,
     prune_threshold: f64,
+    llm_provider: Option<std::sync::Arc<dyn cctx::llm::LlmProvider>>,
 ) -> Result<()> {
     if context.chunk_count() == 0 {
         eprintln!("No context to optimize");
@@ -449,6 +461,7 @@ fn cmd_optimize(
         embedding_provider,
         dedup_threshold,
         prune_threshold,
+        llm_provider,
     };
     let mut pipeline = Pipeline::new(config);
     for name in &names {
@@ -493,6 +506,7 @@ fn cmd_compress(
         embedding_provider: None,
         dedup_threshold: 0.85,
         prune_threshold: 0.3,
+        llm_provider: None,
     };
     let mut pipeline = Pipeline::new(config);
     pipeline.add(make_strategy("structural")?);
@@ -944,6 +958,30 @@ fn make_llm_provider(name: &str, model: Option<&str>) -> Result<Box<dyn cctx::ll
             "Unknown LLM provider '{}'. Supported: ollama, openai",
             other
         ),
+    }
+}
+
+/// Create an LLM provider for the pipeline (returns Option<Arc> for PipelineConfig).
+/// Returns None if no provider specified (summarize strategy falls back).
+fn make_llm_provider_opt(
+    name: Option<&str>,
+    #[allow(unused_variables)] model: Option<&str>,
+) -> Result<Option<std::sync::Arc<dyn cctx::llm::LlmProvider>>> {
+    match name {
+        None => Ok(None),
+        #[cfg(feature = "llm")]
+        Some(n) => {
+            let provider = make_llm_provider(n, model)?;
+            // Convert Box<dyn LlmProvider> → Arc<dyn LlmProvider>.
+            Ok(Some(std::sync::Arc::from(provider)))
+        }
+        #[cfg(not(feature = "llm"))]
+        Some(_) => {
+            anyhow::bail!(
+                "LLM providers require --features llm.\n\
+                 Rebuild with: cargo build --features llm"
+            );
+        }
     }
 }
 

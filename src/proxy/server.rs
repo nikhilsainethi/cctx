@@ -23,6 +23,7 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         embedding_provider,
         dedup_threshold: config.dedup_threshold,
         prune_threshold: 0.3,
+        llm_provider: None, // proxy doesn't support LLM summarization yet
     });
 
     let strategy_label = if config.strategy_names.is_empty() {

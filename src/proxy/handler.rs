@@ -561,6 +561,7 @@ fn run_pipeline_sync(
             embedding_provider: config.embedding_provider.clone(),
             dedup_threshold: config.dedup_threshold,
             prune_threshold: config.prune_threshold,
+            llm_provider: config.llm_provider.clone(),
         };
         let mut pipeline = Pipeline::new(pc);
         for name in strategy_names {

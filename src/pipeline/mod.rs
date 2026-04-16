@@ -9,7 +9,8 @@ use anyhow::Result;
 use crate::core::context::{Chunk, Context};
 use crate::core::tokenizer::Tokenizer;
 use crate::embeddings::EmbeddingProvider;
-use crate::strategies::{bookend, dedup, prune, structural};
+use crate::llm::LlmProvider;
+use crate::strategies::{bookend, dedup, prune, structural, summarize};
 
 // ── Strategy trait ────────────────────────────────────────────────────────────
 
@@ -29,6 +30,8 @@ pub struct PipelineConfig {
     pub dedup_threshold: f64,
     /// Importance score threshold for sentence pruning (default 0.3).
     pub prune_threshold: f64,
+    /// LLM provider for summarization. None = summarize strategy skipped/fallback.
+    pub llm_provider: Option<Arc<dyn LlmProvider>>,
 }
 
 // ── Strategy wrappers ─────────────────────────────────────────────────────────
@@ -96,6 +99,22 @@ impl Strategy for PruneStrategy {
     }
 }
 
+pub struct SummarizeStrategy;
+
+impl Strategy for SummarizeStrategy {
+    fn name(&self) -> &str {
+        "summarize"
+    }
+    fn apply(&self, context: &Context, config: &PipelineConfig) -> Result<Vec<Chunk>> {
+        summarize::apply(
+            context,
+            config.llm_provider.as_deref(),
+            &config.tokenizer,
+            6, // default: keep last 6 turns verbatim
+        )
+    }
+}
+
 // ── Factory + presets ─────────────────────────────────────────────────────────
 
 pub fn make_strategy(name: &str) -> Result<Box<dyn Strategy>> {
@@ -104,8 +123,9 @@ pub fn make_strategy(name: &str) -> Result<Box<dyn Strategy>> {
         "structural" => Ok(Box::new(StructuralStrategy)),
         "dedup" => Ok(Box::new(DeduplicateStrategy)),
         "prune" => Ok(Box::new(PruneStrategy)),
+        "summarize" => Ok(Box::new(SummarizeStrategy)),
         other => anyhow::bail!(
-            "Unknown strategy '{}'. Supported: bookend, structural, dedup, prune",
+            "Unknown strategy '{}'. Supported: bookend, structural, dedup, prune, summarize",
             other
         ),
     }
@@ -115,7 +135,7 @@ pub fn preset_strategies(preset: &str) -> Result<Vec<&'static str>> {
     match preset {
         "safe" => Ok(vec!["bookend"]),
         "balanced" => Ok(vec!["bookend", "structural"]),
-        "aggressive" => Ok(vec!["bookend", "structural", "dedup", "prune"]),
+        "aggressive" => Ok(vec!["bookend", "structural", "dedup", "prune", "summarize"]),
         other => anyhow::bail!(
             "Unknown preset '{}'. Supported: safe, balanced, aggressive",
             other
