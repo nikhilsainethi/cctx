@@ -4,6 +4,7 @@ pub mod analyzer;
 pub mod core;
 pub mod embeddings;
 pub mod formats;
+pub mod llm;
 pub mod pipeline;
 pub mod strategies;
 

@@ -33,8 +33,8 @@ jobs:
       - name: Clippy (core)
         run: cargo clippy -- -D warnings
 
-      - name: Clippy (proxy + embeddings)
-        run: cargo clippy --features "proxy,embeddings" -- -D warnings
+      - name: Clippy (all features)
+        run: cargo clippy --features "proxy,embeddings,llm" -- -D warnings
 
       - name: Test (core)
         run: cargo test
@@ -45,8 +45,11 @@ jobs:
       - name: Test (embeddings)
         run: cargo test --features embeddings
 
+      - name: Test (llm)
+        run: cargo test --features llm
+
       - name: Build release (core)
         run: cargo build --release
 
       - name: Build release (full)
-        run: cargo build --release --features "proxy,embeddings"
+        run: cargo build --release --features "proxy,embeddings,llm"

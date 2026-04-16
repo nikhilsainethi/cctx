@@ -174,6 +174,24 @@ enum Commands {
         dashboard: bool,
     },
 
+    /// Summarize text using an LLM (Ollama or OpenAI).
+    ///
+    /// Utility command for testing LLM integration. Reads text from a file
+    /// or stdin, sends it to the configured LLM, prints the summary.
+    ///
+    /// Requires: cargo build --features llm
+    #[cfg(feature = "llm")]
+    Summarize {
+        /// Input file. Omit or use "-" to read from stdin.
+        file: Option<PathBuf>,
+        /// LLM provider: ollama (default, local) or openai (API).
+        #[arg(long, default_value = "ollama")]
+        llm_provider: String,
+        /// Override the default model (ollama: llama3.2:3b, openai: gpt-4o-mini).
+        #[arg(long)]
+        llm_model: Option<String>,
+    },
+
     /// Compare two context files side-by-side (before vs after).
     ///
     /// Shows token changes, message differences, dead zone improvements,
@@ -315,6 +333,22 @@ fn main() -> Result<()> {
                 dedup_threshold,
                 dashboard,
             }))
+        }
+
+        #[cfg(feature = "llm")]
+        Commands::Summarize {
+            file,
+            llm_provider,
+            llm_model,
+        } => {
+            let raw = read_input(&file)?;
+            let provider = make_llm_provider(&llm_provider, llm_model.as_deref())?;
+            let summary = provider.complete(
+                "You are a concise summarizer. Produce a clear, dense summary that preserves all key information. Use bullet points for multiple topics.",
+                &raw,
+            )?;
+            println!("{}", summary);
+            Ok(())
         }
 
         Commands::Diff {
@@ -886,6 +920,31 @@ fn build_context(raw: &str, input_format: Option<InputFormat>) -> Result<AppCont
     let total_tokens: usize = chunks.iter().map(|c| c.token_count).sum();
     assign_attention_zones(&mut chunks, total_tokens);
     Ok(AppContext::new(chunks))
+}
+
+/// Create an LLM provider from CLI flags.
+#[cfg(feature = "llm")]
+fn make_llm_provider(name: &str, model: Option<&str>) -> Result<Box<dyn cctx::llm::LlmProvider>> {
+    match name {
+        "ollama" => {
+            let provider = match model {
+                Some(m) => cctx::llm::ollama::OllamaLlm::with_model(m),
+                None => cctx::llm::ollama::OllamaLlm::default_local(),
+            };
+            Ok(Box::new(provider))
+        }
+        "openai" => {
+            let provider = match model {
+                Some(m) => cctx::llm::openai::OpenAILlm::from_env_with_model(m)?,
+                None => cctx::llm::openai::OpenAILlm::from_env()?,
+            };
+            Ok(Box::new(provider))
+        }
+        other => anyhow::bail!(
+            "Unknown LLM provider '{}'. Supported: ollama, openai",
+            other
+        ),
+    }
 }
 
 /// Create an embedding provider from the CLI flag.

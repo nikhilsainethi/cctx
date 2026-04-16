@@ -66,6 +66,9 @@ default = []
 # Embedding providers (Ollama, OpenAI) for semantic deduplication.
 # Adds reqwest::blocking for sync HTTP calls to embedding APIs.
 embeddings = ["dep:reqwest"]
+# LLM providers (Ollama, OpenAI) for summarization.
+# Also uses reqwest::blocking — no tokio needed for CLI usage.
+llm = ["dep:reqwest"]
 # OpenAI-compatible proxy server with context optimization.
 proxy = ["dep:axum", "dep:tokio", "dep:reqwest", "dep:tower", "dep:tower-http"]
 
