@@ -29,6 +29,9 @@ thiserror = "1"
 # owo-colors: zero-dependency terminal color library.
 owo-colors = "4"
 
+# toml: parses .cctx.toml / ~/.config/cctx/config.toml. Pure Rust, no deps.
+toml = "0.8"
+
 # ── Optional proxy dependencies (only compiled with --features proxy) ──────
 #
 # `optional = true` means the crate is only compiled when a feature that

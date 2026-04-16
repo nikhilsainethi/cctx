@@ -66,6 +66,13 @@ pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
         format!("cctx proxy v{}", version),
         width = w - 2
     );
+    if let Some(src) = &config.config_source {
+        eprintln!(
+            "│  {:<width$}│",
+            format!("Config:      {}", src),
+            width = w - 2
+        );
+    }
     eprintln!(
         "│  {:<width$}│",
         format!("Listening:   {}", config.listen_addr),

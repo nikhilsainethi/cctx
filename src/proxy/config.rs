@@ -14,4 +14,7 @@ pub struct ProxyConfig {
     pub dedup_threshold: f64,
     /// Show live-updating dashboard on stderr.
     pub dashboard: bool,
+    /// Source of the merged configuration (e.g. ".cctx.toml (project)").
+    /// Displayed in the startup banner. `None` hides the line.
+    pub config_source: Option<String>,
 }

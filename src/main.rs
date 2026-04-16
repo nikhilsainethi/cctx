@@ -5,11 +5,22 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use cctx::analyzer::health::{analyze, assign_attention_zones, print_chunk_table};
+#[cfg(feature = "proxy")]
+use cctx::config::ConfigSource;
 use cctx::core::context::{AttentionZone, Chunk, Context as AppContext, Message};
 use cctx::core::tokenizer::Tokenizer;
 use cctx::formats::{self, InputFormat};
 use cctx::pipeline::executor::Pipeline;
 use cctx::pipeline::{PipelineConfig, make_strategy, preset_strategies};
+
+// Built-in defaults used when neither CLI nor config file specify a value.
+const DEFAULT_DEDUP_THRESHOLD: f64 = 0.85;
+const DEFAULT_PRUNE_THRESHOLD: f64 = 0.3;
+// Proxy-only defaults — only referenced when the proxy feature is enabled.
+#[cfg(feature = "proxy")]
+const DEFAULT_PROXY_LISTEN: &str = "127.0.0.1:8080";
+#[cfg(feature = "proxy")]
+const DEFAULT_PROXY_TIMEOUT: u64 = 120;
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
@@ -96,13 +107,14 @@ enum Commands {
         /// Requires: cargo build --features embeddings
         #[arg(long)]
         embedding_provider: Option<String>,
-        /// Cosine similarity threshold for semantic dedup (0.0-1.0).
-        #[arg(long, default_value_t = 0.85)]
-        dedup_threshold: f64,
-        /// Importance score threshold for sentence pruning (0.0-1.0).
-        /// Sentences scoring below this are removed.
-        #[arg(long, default_value_t = 0.3)]
-        prune_threshold: f64,
+        /// Cosine similarity threshold for semantic dedup (0.0-1.0). Default: 0.85.
+        /// Falls back to `[dedup].threshold` in config if unset.
+        #[arg(long)]
+        dedup_threshold: Option<f64>,
+        /// Importance score threshold for sentence pruning (0.0-1.0). Default: 0.3.
+        /// Falls back to `[prune].threshold` in config if unset.
+        #[arg(long)]
+        prune_threshold: Option<f64>,
         /// LLM provider for summarization: ollama or openai.
         /// Requires: cargo build --features llm
         #[arg(long)]
@@ -149,14 +161,16 @@ enum Commands {
     /// Requires: cargo build --features proxy
     #[cfg(feature = "proxy")]
     Proxy {
-        /// Address to listen on.
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        listen: String,
-        /// Upstream LLM API base URL.
+        /// Address to listen on. Default: 127.0.0.1:8080.
+        /// Falls back to `[proxy].listen` in config if unset.
         #[arg(long)]
-        upstream: String,
+        listen: Option<String>,
+        /// Upstream LLM API base URL.
+        /// Falls back to `[proxy].upstream` in config if unset.
+        #[arg(long)]
+        upstream: Option<String>,
         /// Optimization strategies to apply. Repeat for chaining.
-        /// Without this, the proxy is a passthrough (no optimization).
+        /// Without this (and no config entry), the proxy is a passthrough.
         #[arg(long)]
         strategy: Vec<String>,
         /// Token budget. After strategies run, if tokens still exceed this,
@@ -167,15 +181,15 @@ enum Commands {
         /// unmodified request. Safe for testing in production.
         #[arg(long, default_value_t = false)]
         dry_run: bool,
-        /// Upstream request timeout in seconds.
-        #[arg(long, default_value_t = 120)]
-        timeout: u64,
+        /// Upstream request timeout in seconds. Default: 120.
+        #[arg(long)]
+        timeout: Option<u64>,
         /// Embedding provider for semantic dedup: ollama or openai.
         #[arg(long)]
         embedding_provider: Option<String>,
-        /// Cosine similarity threshold for semantic dedup.
-        #[arg(long, default_value_t = 0.85)]
-        dedup_threshold: f64,
+        /// Cosine similarity threshold for semantic dedup. Default: 0.85.
+        #[arg(long)]
+        dedup_threshold: Option<f64>,
         /// Show live-updating dashboard on stderr.
         #[arg(long, default_value_t = false)]
         dashboard: bool,
@@ -199,6 +213,69 @@ enum Commands {
         llm_model: Option<String>,
     },
 
+    /// Watch a file and re-analyze every --interval seconds when it changes.
+    ///
+    /// Polls modification time; re-reads and re-analyzes on change. With
+    /// --auto-optimize --output <path>, also runs the optimization pipeline
+    /// on every change and writes the result to <path> — useful as a
+    /// lightweight alternative to the proxy for tools that can read from
+    /// a file rather than swap base URLs.
+    ///
+    /// Press Ctrl+C to stop.
+    Watch {
+        /// Input file to watch.
+        file: PathBuf,
+        /// Polling interval in seconds.
+        #[arg(long, default_value_t = 5)]
+        interval: u64,
+        /// Health score (0-100) below which a red warning is displayed.
+        #[arg(long, default_value_t = 50)]
+        alert_threshold: u32,
+        /// On every change, run optimization and write the result to --output.
+        #[arg(long, default_value_t = false)]
+        auto_optimize: bool,
+        /// Path to write the optimized output. Required with --auto-optimize.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Strategy to apply (repeat for chaining). Used only with --auto-optimize.
+        #[arg(long)]
+        strategy: Vec<String>,
+        /// Preset pipeline: safe, balanced, aggressive.
+        #[arg(long)]
+        preset: Option<String>,
+        /// Score relevance against this query (used by bookend).
+        #[arg(long)]
+        query: Option<String>,
+        /// Token budget enforced after strategies run.
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Embedding provider for semantic dedup: tfidf, ollama, or openai.
+        #[arg(long)]
+        embedding_provider: Option<String>,
+        /// Cosine similarity threshold for semantic dedup.
+        #[arg(long)]
+        dedup_threshold: Option<f64>,
+        /// Importance threshold for sentence pruning.
+        #[arg(long)]
+        prune_threshold: Option<f64>,
+        /// LLM provider for summarization: ollama or openai.
+        #[arg(long)]
+        llm_provider: Option<String>,
+        /// Override the default LLM model.
+        #[arg(long)]
+        llm_model: Option<String>,
+    },
+
+    /// Write a commented `.cctx.toml` into the current directory.
+    ///
+    /// Every setting is commented out — uncomment what you need. Refuses to
+    /// overwrite an existing file unless `--force` is passed.
+    Init {
+        /// Overwrite an existing .cctx.toml.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+
     /// Compare two context files side-by-side (before vs after).
     ///
     /// Shows token changes, message differences, dead zone improvements,
@@ -220,6 +297,14 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Load config once. Missing file → defaults; invalid TOML → error.
+    // Loading is cheap (one stat + optional read) so we do it unconditionally.
+    // config_source is only read by the proxy command; the allow keeps core
+    // (non-proxy) builds warning-free.
+    #[allow(unused_variables)]
+    let (config, config_source) = cctx::config::load()?;
+
     match cli.command {
         Commands::Analyze {
             file,
@@ -247,18 +332,39 @@ fn main() -> Result<()> {
         } => {
             let raw = read_input(&file)?;
             let ctx = build_context(&raw, input_format.to_lib())?;
-            let emb_provider = make_embedding_provider(embedding_provider.as_deref())?;
-            let llm = make_llm_provider_opt(llm_provider.as_deref(), llm_model.as_deref())?;
+
+            // Merge CLI → config → built-in defaults.
+            let merged_strategies = if !strategy.is_empty() {
+                strategy
+            } else {
+                config.optimize.strategies.clone().unwrap_or_default()
+            };
+            let merged_budget = budget.or(config.optimize.budget);
+            let merged_embedding =
+                embedding_provider.or_else(|| config.dedup.embedding_provider.clone());
+            let merged_dedup_threshold = dedup_threshold
+                .or(config.dedup.threshold)
+                .unwrap_or(DEFAULT_DEDUP_THRESHOLD);
+            let merged_prune_threshold = prune_threshold
+                .or(config.prune.threshold)
+                .unwrap_or(DEFAULT_PRUNE_THRESHOLD);
+            let merged_llm_provider =
+                llm_provider.or_else(|| config.summarize.llm_provider.clone());
+            let merged_llm_model = llm_model.or_else(|| config.summarize.llm_model.clone());
+
+            let emb_provider = make_embedding_provider(merged_embedding.as_deref())?;
+            let llm =
+                make_llm_provider_opt(merged_llm_provider.as_deref(), merged_llm_model.as_deref())?;
             cmd_optimize(
                 ctx,
-                strategy,
+                merged_strategies,
                 preset,
                 query,
-                budget,
+                merged_budget,
                 &output,
                 emb_provider,
-                dedup_threshold,
-                prune_threshold,
+                merged_dedup_threshold,
+                merged_prune_threshold,
                 llm,
             )
         }
@@ -325,7 +431,32 @@ fn main() -> Result<()> {
             dedup_threshold,
             dashboard,
         } => {
-            for name in &strategy {
+            // Merge CLI → config → built-in defaults.
+            let listen_addr = listen
+                .or_else(|| config.proxy.listen.clone())
+                .unwrap_or_else(|| DEFAULT_PROXY_LISTEN.to_string());
+            let upstream_url = upstream.or_else(|| config.proxy.upstream.clone()).context(
+                "Missing upstream URL. Pass --upstream or set [proxy].upstream in .cctx.toml.",
+            )?;
+            let strategy_names = if !strategy.is_empty() {
+                strategy
+            } else {
+                config.proxy.strategies.clone().unwrap_or_default()
+            };
+            let budget = budget.or(config.proxy.budget);
+            let timeout_secs = timeout
+                .or(config.proxy.timeout)
+                .unwrap_or(DEFAULT_PROXY_TIMEOUT);
+            let embedding_provider =
+                embedding_provider.or_else(|| config.proxy.embedding_provider.clone());
+            let dedup_threshold = dedup_threshold
+                .or(config.dedup.threshold)
+                .unwrap_or(DEFAULT_DEDUP_THRESHOLD);
+            // Boolean CLI flags can only turn ON, not OFF — config turns ON
+            // too. Edit config to disable.
+            let dashboard = dashboard || config.proxy.dashboard.unwrap_or(false);
+
+            for name in &strategy_names {
                 cctx::pipeline::make_strategy(name)?;
             }
             if let Some(0) = budget {
@@ -334,15 +465,16 @@ fn main() -> Result<()> {
             let rt =
                 tokio::runtime::Runtime::new().context("Failed to create tokio async runtime")?;
             rt.block_on(cctx::proxy::server::run(cctx::proxy::config::ProxyConfig {
-                listen_addr: listen,
-                upstream_url: upstream,
-                strategy_names: strategy,
+                listen_addr,
+                upstream_url,
+                strategy_names,
                 budget,
                 dry_run,
-                timeout_secs: timeout,
+                timeout_secs,
                 embedding_provider,
                 dedup_threshold,
                 dashboard,
+                config_source: config_source_label(&config_source),
             }))
         }
 
@@ -375,6 +507,86 @@ fn main() -> Result<()> {
             let ctx_a = build_context(&raw_a, fmt)?;
             cmd_diff(&ctx_b, &ctx_a, format)
         }
+
+        Commands::Init { force } => cmd_init(force),
+
+        Commands::Watch {
+            file,
+            interval,
+            alert_threshold,
+            auto_optimize,
+            output,
+            strategy,
+            preset,
+            query,
+            budget,
+            embedding_provider,
+            dedup_threshold,
+            prune_threshold,
+            llm_provider,
+            llm_model,
+        } => {
+            // Same merge semantics as Optimize: CLI → config → built-in.
+            let strategies = if !strategy.is_empty() {
+                strategy
+            } else {
+                config.optimize.strategies.clone().unwrap_or_default()
+            };
+            let budget = budget.or(config.optimize.budget);
+            let embedding_provider =
+                embedding_provider.or_else(|| config.dedup.embedding_provider.clone());
+            let dedup_threshold = dedup_threshold
+                .or(config.dedup.threshold)
+                .unwrap_or(DEFAULT_DEDUP_THRESHOLD);
+            let prune_threshold = prune_threshold
+                .or(config.prune.threshold)
+                .unwrap_or(DEFAULT_PRUNE_THRESHOLD);
+            let llm_provider_name = llm_provider.or_else(|| config.summarize.llm_provider.clone());
+            let llm_model_name = llm_model.or_else(|| config.summarize.llm_model.clone());
+
+            let emb = make_embedding_provider(embedding_provider.as_deref())?;
+            let llm =
+                make_llm_provider_opt(llm_provider_name.as_deref(), llm_model_name.as_deref())?;
+
+            cctx::watch::run(cctx::watch::WatchConfig {
+                file,
+                interval_secs: interval,
+                alert_threshold,
+                auto_optimize,
+                output,
+                strategies,
+                preset,
+                query,
+                budget,
+                embedding_provider: emb,
+                llm_provider: llm,
+                dedup_threshold,
+                prune_threshold,
+            })
+        }
+    }
+}
+
+// ── Init command ──────────────────────────────────────────────────────────────
+
+fn cmd_init(force: bool) -> Result<()> {
+    let path = PathBuf::from(".cctx.toml");
+    if path.exists() && !force {
+        anyhow::bail!(".cctx.toml already exists in this directory. Pass --force to overwrite.");
+    }
+    std::fs::write(&path, cctx::config::INIT_TEMPLATE)
+        .with_context(|| format!("Cannot write {}", path.display()))?;
+    eprintln!("Wrote {} — edit to customize defaults.", path.display());
+    Ok(())
+}
+
+/// Convert ConfigSource → banner label, returning None when running on defaults
+/// (so the banner simply omits the Config line). Used only by the proxy.
+#[cfg(feature = "proxy")]
+fn config_source_label(src: &ConfigSource) -> Option<String> {
+    match src {
+        ConfigSource::Defaults => None,
+        other => Some(other.label()),
     }
 }
 
