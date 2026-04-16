@@ -25,7 +25,12 @@ const STOP_WORDS: &[&str] = &[
     "also", "just", "more", "very", "too",
 ];
 
-/// TF-IDF embedder for testing. No API calls, pure computation.
+/// Zero-dependency TF-IDF approximator for the [`EmbeddingProvider`] trait.
+///
+/// Produces sparse vectors from the text itself — no model weights, no
+/// network calls. Good enough to catch chunks repeating the same key terms;
+/// won't catch paraphrases or synonymy. The default path when no external
+/// embedder is configured.
 pub struct TfIdfEmbedder;
 
 impl EmbeddingProvider for TfIdfEmbedder {

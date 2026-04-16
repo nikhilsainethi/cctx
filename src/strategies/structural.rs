@@ -15,8 +15,16 @@ use crate::core::tokenizer::Tokenizer;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Compress structured content in every chunk. Returns new chunks with
-/// modified content and recounted token totals.
+/// Compress structured content (JSON payloads, code blocks, markdown) in
+/// every chunk, returning a new chunk list with recounted token totals.
+///
+/// Three sub-passes run in order on each chunk:
+/// JSON field pruning (strip timestamps/UUIDs/metadata, collapse deep nesting),
+/// code signature extraction (keep function/class signatures, replace bodies
+/// with `# N lines`), and markdown collapse (keep sections matching `query`
+/// terms, header-only for the rest).
+///
+/// When `query` is `None`, the markdown-collapse step is a no-op.
 pub fn apply(context: &Context, query: Option<&str>, tokenizer: &Tokenizer) -> Vec<Chunk> {
     context
         .chunks
@@ -257,10 +265,10 @@ fn should_prune_field(key: &str, value: &Value) -> bool {
     }
 
     // Values that look like UUIDs (8-4-4-4-12 hex pattern).
-    if let Value::String(s) = value
-        && is_uuid_like(s)
-    {
-        return true;
+    if let Value::String(s) = value {
+        if is_uuid_like(s) {
+            return true;
+        }
     }
 
     false

@@ -3,29 +3,36 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderName, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 
 use crate::analyzer::health::assign_attention_zones;
 use crate::core::context::{AttentionZone, Chunk, Context, Message};
 use crate::core::tokenizer::Tokenizer;
-use crate::pipeline::executor::{Pipeline, truncate_to_budget};
-use crate::pipeline::{PipelineConfig, make_strategy};
+use crate::pipeline::executor::{truncate_to_budget, Pipeline};
+use crate::pipeline::{make_strategy, PipelineConfig};
 
 use super::metrics::Metrics;
-use super::upstream::{UpstreamClient, classify_error};
+use super::upstream::{classify_error, UpstreamClient};
 
-/// Shared application state.
+/// Shared application state passed to every route handler via `Arc`.
 pub struct AppState {
+    /// HTTP client for forwarding to the upstream LLM API.
     pub upstream: UpstreamClient,
+    /// Live metrics collector.
     pub metrics: Arc<Metrics>,
+    /// Strategies to apply on each chat completion.
     pub strategy_names: Vec<String>,
+    /// Pipeline configuration (tokenizer + thresholds + providers).
     pub pipeline_config: Arc<PipelineConfig>,
+    /// Optional post-pipeline token budget.
     pub budget: Option<usize>,
+    /// When `true`, forward the original request even after optimization.
     pub dry_run: bool,
+    /// When `true`, the live dashboard task is running on another thread.
     pub dashboard: bool,
 }
 
@@ -33,6 +40,8 @@ pub struct AppState {
 // POST /v1/chat/completions
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Handler for `POST /v1/chat/completions`: parses the payload, runs the
+/// strategy pipeline, and forwards the (possibly rewritten) request upstream.
 pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -96,6 +105,9 @@ pub async fn chat_completions(
 // Catch-all passthrough
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Catch-all handler: forwards any unmatched request to the upstream API
+/// unmodified. Covers OpenAI endpoints cctx doesn't specifically optimize
+/// (embeddings, models, audio, etc.).
 pub async fn catchall(
     State(state): State<Arc<AppState>>,
     method: Method,
@@ -119,14 +131,17 @@ pub async fn catchall(
 // /cctx/* endpoints
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Handler for `GET /cctx/health`. Always returns `{"status": "ok"}`.
 pub async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
 }
 
+/// Handler for `GET /cctx/metrics`. Returns a JSON [`super::metrics::MetricsSnapshot`].
 pub async fn get_metrics(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(serde_json::to_value(state.metrics.snapshot()).unwrap())
 }
 
+/// Handler for `GET /cctx/metrics/reset`. Zeros every counter.
 pub async fn reset_metrics(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     state.metrics.reset();
     Json(serde_json::json!({"status": "reset"}))
@@ -332,10 +347,10 @@ async fn handle_streaming(
                 ) {
                     continue;
                 }
-                if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes())
-                    && let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes())
-                {
-                    builder = builder.header(n, v);
+                if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes()) {
+                    if let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
+                        builder = builder.header(n, v);
+                    }
                 }
             }
             builder = builder
@@ -431,10 +446,10 @@ async fn response_from_reqwest(resp: reqwest::Response) -> Response {
         ) {
             continue;
         }
-        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes())
-            && let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes())
-        {
-            builder = builder.header(n, v);
+        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes()) {
+            if let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
+                builder = builder.header(n, v);
+            }
         }
     }
     match resp.bytes().await {

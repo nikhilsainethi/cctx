@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::routing::{get, post};
+use axum::Router;
 
 use crate::core::tokenizer::Tokenizer;
 use crate::pipeline::PipelineConfig;
@@ -14,6 +14,17 @@ use super::handler::{self, AppState};
 use super::metrics::Metrics;
 use super::upstream::UpstreamClient;
 
+/// Start the proxy server and run it until interrupted.
+///
+/// Prints a startup banner to stderr, optionally spawns the dashboard
+/// task, then blocks on the axum router listening on
+/// [`ProxyConfig::listen_addr`].
+///
+/// # Errors
+///
+/// Returns `Err` if the listen address fails to bind or the axum server
+/// errors out. Strategy-name validation is expected to have happened in the
+/// caller.
 pub async fn run(config: ProxyConfig) -> anyhow::Result<()> {
     let embedding_provider = build_embedding_provider(config.embedding_provider.as_deref())?;
 

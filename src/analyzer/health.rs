@@ -6,7 +6,19 @@ use crate::core::context::{AttentionZone, Chunk, Context};
 
 // ── Model budget lookup ───────────────────────────────────────────────────────
 
-/// Map a model name to its context window size in tokens.
+/// Return the context-window size (in tokens) for a known model name.
+///
+/// Unknown names fall through to a safe 128k default. Used by [`analyze`] to
+/// compute the budget-utilization metric.
+///
+/// # Examples
+///
+/// ```
+/// use cctx::analyzer::health::model_budget;
+/// assert_eq!(model_budget("gpt-4o"), 128_000);
+/// assert_eq!(model_budget("claude-sonnet"), 200_000);
+/// assert_eq!(model_budget("unknown"), 128_000);
+/// ```
 pub fn model_budget(model: &str) -> usize {
     // match on &str works by comparing string content (not pointer identity).
     match model {
@@ -21,53 +33,83 @@ pub fn model_budget(model: &str) -> usize {
 }
 
 // ── Health metric structs ─────────────────────────────────────────────────────
-//
-// Each metric is a separate struct so the JSON output has clean nesting.
-// #[derive(Serialize)] lets serde_json turn these into JSON automatically.
 
+/// Attention dead-zone metric: how much of the context is stuck in the middle.
 #[derive(Serialize)]
 pub struct DeadZoneMetric {
+    /// 0–100; higher = less content in the dead zone.
     pub score: u32,
+    /// Number of chunks that fall in the middle 50%.
     pub chunk_count: usize,
+    /// Tokens sitting in the dead zone.
     pub tokens: usize,
+    /// Dead-zone tokens / total tokens.
     pub ratio: f64,
 }
 
+/// Near-duplicate content metric.
 #[derive(Serialize)]
 pub struct DuplicationMetric {
+    /// 0–100; higher = less duplication.
     pub score: u32,
+    /// Tokens accounted for by near-duplicate pairs.
     pub duplicate_tokens: usize,
+    /// `duplicate_tokens / total_tokens`.
     pub ratio: f64,
+    /// The detected pairs, sorted by similarity descending.
     pub pairs: Vec<DuplicatePair>,
 }
 
+/// Budget-utilization metric: how close the context is to the model's window.
 #[derive(Serialize)]
 pub struct BudgetMetric {
+    /// 0–100; higher = more headroom. 0 when over budget.
     pub score: u32,
+    /// `used / budget` (can exceed 1.0).
     pub utilization: f64,
+    /// Tokens currently in the context.
     pub used: usize,
+    /// Model's context-window size in tokens.
     pub budget: usize,
+    /// Model name used to look up the budget.
     pub model: String,
 }
 
+/// Aggregated context-health report returned by [`analyze`].
+///
+/// Combines three sub-metrics plus a composite 0–100 score and actionable
+/// recommendations. `Serialize` is implemented so callers can emit the report
+/// as JSON directly via [`HealthReport::print_json`].
 #[derive(Serialize)]
 pub struct HealthReport {
+    /// Total tokens across all chunks.
     pub total_tokens: usize,
+    /// Number of chunks in the analyzed context.
     pub chunk_count: usize,
+    /// Weighted composite of the three sub-metric scores (0–100).
     pub health_score: u32,
+    /// Dead-zone placement details.
     pub dead_zone: DeadZoneMetric,
+    /// Duplication details.
     pub duplication: DuplicationMetric,
+    /// Budget-utilization details.
     pub budget: BudgetMetric,
+    /// Suggested `cctx` commands to improve health, keyed off the sub-scores.
     pub recommendations: Vec<String>,
 }
 
 // ── Attention zone assignment ─────────────────────────────────────────────────
 
-/// Label each chunk's attention zone based on its position in the token stream.
+/// Label each chunk's [`AttentionZone`] in place, based on its position in
+/// the cumulative token stream.
 ///
 /// U-curve model (Liu et al., TACL 2024):
-///   STRONG    = first 25% or last 25% of tokens
-///   DEAD ZONE = middle 50%
+///
+/// - `STRONG`    — first 25% or last 25% of tokens
+/// - `DEAD ZONE` — middle 50%
+///
+/// Call this after any pipeline step that reorders or mutates chunks —
+/// strategies don't re-label their own output.
 pub fn assign_attention_zones(chunks: &mut [Chunk], total_tokens: usize) {
     let mut cumulative = 0usize;
     for chunk in chunks.iter_mut() {
@@ -87,9 +129,27 @@ pub fn assign_attention_zones(chunks: &mut [Chunk], total_tokens: usize) {
 
 // ── Analysis ──────────────────────────────────────────────────────────────────
 
-/// Run all health checks and return a full report.
+/// Run all health checks and return a [`HealthReport`].
 ///
-/// `model` is used to look up the context window budget (e.g. "claude-sonnet" → 200k).
+/// Computes three sub-metrics (dead-zone, duplication, budget) and a
+/// weighted composite score. `model` is used only to look up the context-
+/// window size for the budget metric — unknown names fall through to a 128k
+/// default via [`model_budget`].
+///
+/// # Examples
+///
+/// ```
+/// use cctx::analyzer::health::{analyze, assign_attention_zones};
+/// use cctx::core::context::{Chunk, Context, AttentionZone};
+///
+/// let mut chunks = vec![Chunk {
+///     index: 0, role: "user".into(), content: "hi".into(),
+///     token_count: 1, relevance_score: 1.0, attention_zone: AttentionZone::Strong,
+/// }];
+/// assign_attention_zones(&mut chunks, 1);
+/// let report = analyze(&Context::new(chunks), "gpt-4o");
+/// assert_eq!(report.chunk_count, 1);
+/// ```
 pub fn analyze(context: &Context, model: &str) -> HealthReport {
     let budget = model_budget(model);
 
@@ -195,7 +255,11 @@ pub fn analyze(context: &Context, model: &str) -> HealthReport {
 const BOX_W: usize = 56;
 
 impl HealthReport {
-    /// Render the full health report with box-drawing borders and colors.
+    /// Render the full report to stdout with box-drawing borders and color.
+    ///
+    /// Uses ANSI SGR escape codes via `owo-colors`; output looks correct on
+    /// any modern terminal and plain ASCII on dumb terminals that ignore
+    /// the escapes.
     pub fn print_terminal(&self) {
         // ── Header ────────────────────────────────────────────────────
         println!("╭{}╮", "─".repeat(BOX_W));
@@ -300,7 +364,10 @@ impl HealthReport {
         }
     }
 
-    /// Emit the report as pretty-printed JSON.
+    /// Emit the report to stdout as pretty-printed JSON.
+    ///
+    /// Safe to parse downstream — schema matches the `#[derive(Serialize)]`
+    /// layouts on the metric structs exactly.
     pub fn print_json(&self) {
         // serde_json::to_string_pretty can't fail on our types (no maps with
         // non-string keys), so unwrap is safe here.
@@ -310,7 +377,11 @@ impl HealthReport {
 
 // ── Chunk table (printed above the box) ───────────────────────────────────────
 
-/// Print a per-chunk position table with colored zone labels.
+/// Print a per-chunk position table to stdout, with colored zone labels.
+///
+/// One row per chunk: index, role, token count, attention zone, relevance
+/// score. Typically called before [`HealthReport::print_terminal`] so the
+/// per-chunk view appears above the overall report.
 pub fn print_chunk_table(context: &Context) {
     println!();
     println!(

@@ -3,14 +3,14 @@
 //! Run: cargo bench
 //! Report: target/criterion/report/index.html
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use cctx::analyzer::health::{analyze, assign_attention_zones};
-use cctx::core::context::{AttentionZone, Chunk, Context, Message};
+use cctx::core::context::{AttentionZone, Chunk, Context};
 use cctx::core::tokenizer::Tokenizer;
 use cctx::formats;
 use cctx::pipeline::executor::Pipeline;
-use cctx::pipeline::{PipelineConfig, make_strategy};
+use cctx::pipeline::{make_strategy, PipelineConfig};
 
 fn build_context(raw: &str) -> Context {
     let messages = formats::parse_input(raw, None).unwrap();

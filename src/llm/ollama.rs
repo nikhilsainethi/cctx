@@ -14,6 +14,11 @@ use reqwest::blocking::Client;
 
 use super::LlmProvider;
 
+/// LLM provider backed by a local Ollama server.
+///
+/// Calls `/api/generate` with `stream: false`; the system prompt is
+/// prepended to the user prompt because Ollama's generate endpoint takes a
+/// single prompt field. Uses `reqwest::blocking::Client`, 120s timeout.
 pub struct OllamaLlm {
     client: Client,
     url: String,
@@ -22,6 +27,7 @@ pub struct OllamaLlm {
 }
 
 impl OllamaLlm {
+    /// Build a provider with an explicit URL, model, and sampling temperature.
     pub fn new(url: &str, model: &str, temperature: f64) -> Self {
         OllamaLlm {
             client: Client::builder()
@@ -34,12 +40,12 @@ impl OllamaLlm {
         }
     }
 
-    /// Default: localhost:11434, llama3.2:3b, temperature 0.3.
+    /// Convenience constructor: `http://localhost:11434`, `llama3.2:3b`, T=0.3.
     pub fn default_local() -> Self {
         Self::new("http://localhost:11434", "llama3.2:3b", 0.3)
     }
 
-    /// Default URL + custom model.
+    /// Default localhost URL with a caller-chosen model.
     pub fn with_model(model: &str) -> Self {
         Self::new("http://localhost:11434", model, 0.3)
     }

@@ -1,7 +1,16 @@
 [package]
 name = "cctx"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+rust-version = "1.88"
+authors = ["Nikhil Sai Nethi <nikhilsainethi@gmail.com>"]
+description = "Context compiler for LLMs — optimize, compress, and analyze LLM context for better results and lower costs"
+license = "MIT"
+repository = "https://github.com/nikhilsainethi/cctx"
+homepage = "https://github.com/nikhilsainethi/cctx"
+readme = "README.md"
+keywords = ["llm", "context", "optimization", "ai", "compression"]
+categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
 # ── Core (always compiled) ─────────────────────────────────────────────────

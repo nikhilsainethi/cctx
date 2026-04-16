@@ -19,11 +19,21 @@ use crate::core::context::Message;
 
 // ── Format enum ───────────────────────────────────────────────────────────────
 
+/// Which parser to use on a piece of input.
+///
+/// Pass this to [`parse_input`] as `Some(InputFormat::…)` to skip
+/// auto-detection, or `None` to let [`detect_format`] pick.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputFormat {
+    /// OpenAI chat format: `[{"role": ..., "content": "..."}]`.
     OpenAi,
+    /// Anthropic messages — like OpenAI but `content` may be an array of
+    /// typed blocks (`{"type": "text", "text": "..."}`).
     Anthropic,
+    /// RAG retrieval output: `[{"content": ..., "score": ..., "metadata": ...}]`
+    /// with no `role` field. `score` becomes `relevance_score`.
     RagChunks,
+    /// Arbitrary text — wraps the whole input in a single `document` message.
     Raw,
 }
 
@@ -78,10 +88,31 @@ pub fn detect_format(raw: &str) -> InputFormat {
 
 // ── Public parsing API ────────────────────────────────────────────────────────
 
-/// Parse raw input into a `Vec<Message>`.
+/// Parse raw input into a `Vec<Message>`, auto-detecting the format if needed.
 ///
-/// When `format` is `None`, auto-detects. When `Some(f)`, uses that parser
-/// directly (the `--input-format` CLI override).
+/// When `format` is `None`, calls [`detect_format`] first. When `Some(f)`, uses
+/// `f` directly — this is the path used by the `--input-format` CLI flag.
+///
+/// # Errors
+///
+/// Returns `Err` if the input is the wrong shape for the chosen format
+/// (malformed JSON, missing required fields, etc.). The [`InputFormat::Raw`]
+/// path is infallible.
+///
+/// # Examples
+///
+/// ```
+/// use cctx::formats::{parse_input, InputFormat};
+///
+/// let raw = r#"[{"role": "user", "content": "hi"}]"#;
+/// let msgs = parse_input(raw, None).unwrap();
+/// assert_eq!(msgs.len(), 1);
+/// assert_eq!(msgs[0].role, "user");
+///
+/// let msgs = parse_input("hello", Some(InputFormat::Raw)).unwrap();
+/// assert_eq!(msgs.len(), 1);
+/// assert_eq!(msgs[0].role, "document");
+/// ```
 pub fn parse_input(raw: &str, format: Option<InputFormat>) -> Result<Vec<Message>> {
     let format = format.unwrap_or_else(|| detect_format(raw));
 

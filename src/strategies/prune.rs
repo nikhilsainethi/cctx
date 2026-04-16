@@ -188,7 +188,14 @@ const FILLER_PHRASES: &[&str] = &[
 ///   - System messages (define the LLM's role)
 ///   - Last 2 user messages (current intent)
 ///
-/// Returns new chunks with trimmed content and recounted tokens.
+/// Importance-aware sentence pruning over every chunk in `context`.
+///
+/// Scores each sentence by a weighted mix of stop-word ratio, repetition,
+/// structural markers, and filler-phrase detection; drops sentences whose
+/// score falls below `threshold` (typical default 0.3). Returns new chunks
+/// with trimmed content and recounted token totals.
+///
+/// System messages and the last two user messages are always preserved as-is.
 pub fn apply(context: &Context, threshold: f64, tokenizer: &Tokenizer) -> Vec<Chunk> {
     let stop: HashSet<&str> = STOP_WORDS.iter().copied().collect();
     let n = context.chunks.len();

@@ -13,6 +13,11 @@ use reqwest::blocking::Client;
 
 use super::EmbeddingProvider;
 
+/// Embedding provider backed by a local Ollama server.
+///
+/// Calls Ollama's `/api/embeddings` endpoint one text at a time; the trait-
+/// level batch interface is preserved but requests are serialized. Uses
+/// `reqwest::blocking::Client` so no tokio runtime is required.
 pub struct OllamaEmbedder {
     client: Client,
     url: String,
@@ -20,6 +25,10 @@ pub struct OllamaEmbedder {
 }
 
 impl OllamaEmbedder {
+    /// Build an embedder pointing at a specific Ollama URL and model.
+    ///
+    /// A 60-second timeout is applied; if the timeout-capable client fails
+    /// to build, falls back to the default client.
     pub fn new(url: &str, model: &str) -> Self {
         OllamaEmbedder {
             client: Client::builder()
@@ -31,7 +40,7 @@ impl OllamaEmbedder {
         }
     }
 
-    /// Default: localhost:11434 with nomic-embed-text.
+    /// Convenience constructor: `http://localhost:11434` + `nomic-embed-text`.
     pub fn default_local() -> Self {
         Self::new("http://localhost:11434", "nomic-embed-text")
     }

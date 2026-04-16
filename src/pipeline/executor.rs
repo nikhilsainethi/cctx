@@ -11,14 +11,39 @@ use crate::pipeline::{PipelineConfig, Strategy};
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
-/// An ordered list of strategies applied in sequence.
-/// Output of each strategy feeds as input to the next.
+/// An ordered list of strategies applied in sequence to a [`Context`].
+///
+/// Output of each strategy feeds as input to the next. The shared
+/// [`PipelineConfig`] is lent to every strategy by reference.
+///
+/// # Examples
+///
+/// ```no_run
+/// use cctx::core::context::Context;
+/// use cctx::core::tokenizer::Tokenizer;
+/// use cctx::pipeline::{PipelineConfig, make_strategy};
+/// use cctx::pipeline::executor::Pipeline;
+///
+/// let config = PipelineConfig {
+///     query: None,
+///     tokenizer: Tokenizer::new().unwrap(),
+///     embedding_provider: None,
+///     dedup_threshold: 0.85,
+///     prune_threshold: 0.3,
+///     llm_provider: None,
+/// };
+/// let mut pipeline = Pipeline::new(config);
+/// pipeline.add(make_strategy("bookend").unwrap());
+/// pipeline.add(make_strategy("structural").unwrap());
+/// let output = pipeline.run(Context::new(vec![])).unwrap();
+/// ```
 pub struct Pipeline {
     strategies: Vec<Box<dyn Strategy>>,
     config: PipelineConfig,
 }
 
 impl Pipeline {
+    /// Create an empty pipeline that will share `config` with every strategy.
     pub fn new(config: PipelineConfig) -> Self {
         Pipeline {
             strategies: Vec::new(),
@@ -26,12 +51,18 @@ impl Pipeline {
         }
     }
 
+    /// Append a strategy to the end of the pipeline.
     pub fn add(&mut self, strategy: Box<dyn Strategy>) {
         self.strategies.push(strategy);
     }
 
-    /// Run all strategies in order. Logs per-step metrics to stderr.
-    /// Returns the final context after all strategies have been applied.
+    /// Run every strategy in insertion order, logging per-step metrics to stderr.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if any strategy fails — typically when a strategy depends
+    /// on an external resource (LLM / embedding provider) that's unreachable
+    /// or returns an error.
     pub fn run(&self, context: Context) -> Result<Context> {
         let names: Vec<&str> = self.strategies.iter().map(|s| s.name()).collect();
         eprintln!("Pipeline: {}", names.join(", "));
@@ -59,7 +90,16 @@ impl Pipeline {
     }
 
     /// Run the pipeline, then enforce a token budget by truncating if needed.
-    /// Returns the final context and any warnings about dropped chunks.
+    ///
+    /// If the pipeline's output fits within `budget`, returns it unchanged.
+    /// Otherwise drops the oldest unprotected chunks (system messages and the
+    /// last two user turns are always kept) until the result fits — or until
+    /// only protected chunks remain, in which case an over-budget warning is
+    /// appended to the returned list.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if any pipeline strategy fails; see [`Pipeline::run`].
     pub fn run_with_budget(
         &self,
         context: Context,
@@ -96,6 +136,16 @@ impl Pipeline {
 //   - System messages (define the LLM's role/instructions)
 //   - Last 2 user messages (represent the current intent)
 
+/// Drop the oldest unprotected chunks until the total token count fits `budget`.
+///
+/// Protected chunks are never dropped:
+///
+/// - system messages (role == `"system"`)
+/// - the last two chunks with role == `"user"`
+///
+/// Returns `(kept_chunks, warnings)`. The warnings list records which chunks
+/// were dropped and flags the over-budget case where protected content alone
+/// exceeds the budget.
 pub fn truncate_to_budget(chunks: &[Chunk], budget: usize) -> (Vec<Chunk>, Vec<String>) {
     let total: usize = chunks.iter().map(|c| c.token_count).sum();
     if total <= budget {

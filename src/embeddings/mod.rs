@@ -62,18 +62,45 @@ pub mod openai;
 
 // ── Trait ──────────────────────────────────────────────────────────────────────
 
-/// A provider that converts text into embedding vectors.
-/// Implementations call an external API (Ollama, OpenAI) via HTTP.
+/// A provider that converts text into dense embedding vectors.
+///
+/// Implementations call an external API (Ollama, OpenAI) or compute locally
+/// (TF-IDF fallback). `Send + Sync` lets the provider live inside
+/// `Arc<dyn EmbeddingProvider>` and cross thread boundaries.
 pub trait EmbeddingProvider: Send + Sync {
-    /// Embed one or more texts and return their vector representations.
-    /// Each inner Vec<f32> has the same dimensionality (e.g., 768 for nomic-embed-text).
+    /// Embed a batch of texts and return their vector representations.
+    ///
+    /// Every inner `Vec<f32>` has the same dimensionality (e.g. 768 for
+    /// `nomic-embed-text`, 1536 for OpenAI's `text-embedding-3-small`).
+    /// Order must match `texts` exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the provider's network call fails, the response is
+    /// malformed, or the returned batch size doesn't match `texts.len()`.
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
 }
 
 // ── Vector math ───────────────────────────────────────────────────────────────
 
-/// Cosine similarity between two vectors: (A · B) / (|A| × |B|).
-/// Returns 0.0 if either vector has zero magnitude.
+/// Cosine similarity between two vectors: `(A · B) / (|A| × |B|)`.
+///
+/// Returns `0.0` when either vector has zero magnitude, and the result is
+/// clamped to `[-1.0, 1.0]` to guard against floating-point drift.
+///
+/// # Examples
+///
+/// ```
+/// use cctx::embeddings::cosine_similarity;
+///
+/// let a = [1.0, 0.0, 0.0];
+/// let b = [0.0, 1.0, 0.0];
+/// assert!((cosine_similarity(&a, &b) - 0.0).abs() < 1e-6);
+///
+/// let c = [1.0, 1.0, 0.0];
+/// let d = [1.0, 1.0, 0.0];
+/// assert!((cosine_similarity(&c, &d) - 1.0).abs() < 1e-6);
+/// ```
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     // Dot product: Σ(a_i × b_i)
     let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();

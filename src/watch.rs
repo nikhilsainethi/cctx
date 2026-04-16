@@ -19,35 +19,69 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
-use crate::analyzer::health::{HealthReport, analyze, assign_attention_zones};
+use crate::analyzer::health::{analyze, assign_attention_zones, HealthReport};
 use crate::core::context::{AttentionZone, Chunk, Context as AppContext, Message};
 use crate::core::tokenizer::Tokenizer;
 use crate::embeddings::EmbeddingProvider;
 use crate::formats;
 use crate::llm::LlmProvider;
 use crate::pipeline::executor::Pipeline;
-use crate::pipeline::{PipelineConfig, make_strategy, preset_strategies};
+use crate::pipeline::{make_strategy, preset_strategies, PipelineConfig};
 
 // ── Public config ─────────────────────────────────────────────────────────────
 
+/// All configuration for a [`run`] loop. Built by `main.rs` after merging
+/// CLI flags with `.cctx.toml` values.
 pub struct WatchConfig {
+    /// File to watch.
     pub file: PathBuf,
+    /// Polling interval in seconds. Clamped to at least 1.
     pub interval_secs: u64,
+    /// Health score below which the post-panel line turns red.
     pub alert_threshold: u32,
+    /// When `true`, run the strategy pipeline on each change and write to
+    /// `output`. Requires `output` to be `Some`.
     pub auto_optimize: bool,
+    /// Destination for the optimized output, when `auto_optimize` is on.
     pub output: Option<PathBuf>,
+    /// Strategy names to run when `auto_optimize` is on. Empty defaults to
+    /// `["bookend"]`.
     pub strategies: Vec<String>,
+    /// Preset name that overrides `strategies` when set.
     pub preset: Option<String>,
+    /// Optional query for strategies that use relevance scoring.
     pub query: Option<String>,
+    /// Token budget enforced after strategies run.
     pub budget: Option<usize>,
+    /// Embedding provider for semantic dedup in the auto-optimize pipeline.
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    /// LLM provider for the summarize strategy.
     pub llm_provider: Option<Arc<dyn LlmProvider>>,
+    /// Cosine similarity threshold for semantic dedup.
     pub dedup_threshold: f64,
+    /// Importance threshold for sentence pruning.
     pub prune_threshold: f64,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+/// Run the watch loop until the process is interrupted.
+///
+/// Polls `cfg.file` every `cfg.interval_secs`, re-analyzing on each
+/// modification-time change. Renders a fixed-height status panel in place
+/// on a TTY; logs one line per change on non-TTY output.
+///
+/// # Errors
+///
+/// Returns `Err` if:
+///
+/// - the watched file is missing at startup,
+/// - `auto_optimize`/`output` are inconsistent,
+/// - `output` would collide with the watched file (write loop), or
+/// - the tokenizer fails to initialize (effectively impossible).
+///
+/// Mid-loop read/parse errors are logged to stderr and the loop continues —
+/// mid-edit invalid JSON shouldn't tear down the watcher.
 pub fn run(cfg: WatchConfig) -> Result<()> {
     validate(&cfg)?;
 
@@ -133,10 +167,12 @@ fn validate(cfg: &WatchConfig) -> Result<()> {
         let in_canon = std::fs::canonicalize(&cfg.file).ok();
         let out_canon = std::fs::canonicalize(out).ok();
         // Compare by canonical path; if both resolve, they must differ.
-        if let (Some(a), Some(b)) = (in_canon, out_canon)
-            && a == b
-        {
-            anyhow::bail!("--output must differ from the watched file (would create a write loop)");
+        if let (Some(a), Some(b)) = (in_canon, out_canon) {
+            if a == b {
+                anyhow::bail!(
+                    "--output must differ from the watched file (would create a write loop)"
+                );
+            }
         }
     }
     Ok(())
@@ -407,7 +443,11 @@ fn fmt_n(n: usize) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+    if s.len() <= max {
+        s
+    } else {
+        &s[..max]
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

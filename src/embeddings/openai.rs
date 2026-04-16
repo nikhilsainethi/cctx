@@ -11,6 +11,10 @@ use reqwest::blocking::Client;
 
 use super::EmbeddingProvider;
 
+/// Embedding provider backed by OpenAI's `/v1/embeddings` endpoint.
+///
+/// Uses native batching — a single HTTP request embeds all inputs. Uses
+/// `reqwest::blocking::Client` so no tokio runtime is required.
 pub struct OpenAIEmbedder {
     client: Client,
     api_key: String,
@@ -18,6 +22,7 @@ pub struct OpenAIEmbedder {
 }
 
 impl OpenAIEmbedder {
+    /// Build an embedder with an explicit API key and model name.
     pub fn new(api_key: &str, model: &str) -> Self {
         OpenAIEmbedder {
             client: Client::builder()
@@ -29,7 +34,12 @@ impl OpenAIEmbedder {
         }
     }
 
-    /// Default model: text-embedding-3-small (cheap, fast, 1536 dims).
+    /// Read the API key from `OPENAI_API_KEY` and use `text-embedding-3-small`
+    /// (cheap, fast, 1536 dims).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `OPENAI_API_KEY` is not set in the environment.
     pub fn from_env() -> Result<Self> {
         let key = std::env::var("OPENAI_API_KEY")
             .context("OPENAI_API_KEY not set. Export it or use --embedding-provider ollama.")?;

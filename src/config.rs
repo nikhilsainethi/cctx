@@ -100,8 +100,17 @@ impl ConfigSource {
     }
 }
 
-/// Load config from the standard locations, returning the merged config and its source.
-/// Never fails unless a file exists but is unparseable — missing files are fine.
+/// Load config from the standard locations, returning the merged config and
+/// its source.
+///
+/// Search order: `.cctx.toml` in the current directory, then
+/// `~/.config/cctx/config.toml`. If neither exists, returns
+/// `Config::default()` + [`ConfigSource::Defaults`] — missing files are fine.
+///
+/// # Errors
+///
+/// Returns `Err` only if a config file is found but can't be read or contains
+/// invalid TOML. Callers typically surface the error to the user unchanged.
 pub fn load() -> Result<(Config, ConfigSource)> {
     let project = PathBuf::from(".cctx.toml");
     if project.is_file() {
@@ -109,17 +118,21 @@ pub fn load() -> Result<(Config, ConfigSource)> {
         return Ok((normalize(cfg), ConfigSource::Project(project)));
     }
 
-    if let Some(user) = user_config_path()
-        && user.is_file()
-    {
-        let cfg = load_from_path(&user)?;
-        return Ok((normalize(cfg), ConfigSource::User(user)));
+    if let Some(user) = user_config_path() {
+        if user.is_file() {
+            let cfg = load_from_path(&user)?;
+            return Ok((normalize(cfg), ConfigSource::User(user)));
+        }
     }
 
     Ok((Config::default(), ConfigSource::Defaults))
 }
 
-/// Parse a specific config file. Exposed for tests and `cctx --config path`.
+/// Parse a specific config file. Exposed for tests.
+///
+/// # Errors
+///
+/// Returns `Err` if the file can't be read or contains invalid TOML.
 pub fn load_from_path(path: &Path) -> Result<Config> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("Cannot read config file '{}'", path.display()))?;

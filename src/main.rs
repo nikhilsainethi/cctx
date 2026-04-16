@@ -11,7 +11,7 @@ use cctx::core::context::{AttentionZone, Chunk, Context as AppContext, Message};
 use cctx::core::tokenizer::Tokenizer;
 use cctx::formats::{self, InputFormat};
 use cctx::pipeline::executor::Pipeline;
-use cctx::pipeline::{PipelineConfig, make_strategy, preset_strategies};
+use cctx::pipeline::{make_strategy, preset_strategies, PipelineConfig};
 
 // Built-in defaults used when neither CLI nor config file specify a value.
 const DEFAULT_DEDUP_THRESHOLD: f64 = 0.85;

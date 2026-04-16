@@ -36,10 +36,14 @@ pub mod openai;
 
 /// A provider that generates text completions from an LLM.
 ///
-/// `Send + Sync` because the provider is stored in `Arc` and shared
-/// across threads (blocking thread pool in the proxy, main thread in CLI).
+/// `Send + Sync` because the provider is stored in `Arc` and shared across
+/// threads (blocking thread pool in the proxy, main thread in the CLI).
 pub trait LlmProvider: Send + Sync {
-    /// Generate a completion given a system prompt and user prompt.
-    /// Returns the generated text.
+    /// Generate a completion given a system prompt and a user prompt.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the network call fails, the provider responds with
+    /// an error status, or the response payload is malformed.
     fn complete(&self, system: &str, prompt: &str) -> Result<String>;
 }

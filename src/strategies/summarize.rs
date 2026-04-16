@@ -8,7 +8,7 @@
 //!      ARCHIVED (merged into one rolling summary)
 //!   2. LLM summarizes aging turns into bullet points
 //!   3. LLM merges archived turns into a single summary paragraph
-//!   4. Reassemble: [system] + [archived summary] + [aging bullets] + [recent]
+//!   4. Reassemble: `[system] + [archived summary] + [aging bullets] + [recent]`
 //!
 //! Requires an LLM provider (Ollama or OpenAI). Without one, falls back to
 //! keeping recent turns and truncating the oldest.
@@ -19,12 +19,22 @@ use crate::core::context::{AttentionZone, Chunk, Context};
 use crate::core::tokenizer::Tokenizer;
 use crate::llm::LlmProvider;
 
-/// Apply hierarchical summarization.
+/// Apply hierarchical summarization to `context`.
 ///
-/// `recent_n`: how many recent turns to keep verbatim (default 6).
-/// Aging zone = turns recent_n+1 to 2*recent_n. Everything older = archived.
+/// Three tiers based on `recent_n` (typical default 6):
 ///
-/// If `provider` is None, falls back to keeping recent + dropping oldest.
+/// - **Recent** — last `recent_n` turns kept verbatim.
+/// - **Aging** — turns `recent_n+1..=2*recent_n` compressed to bullet lists
+///   via the LLM provider.
+/// - **Archived** — everything older, merged into a single summary paragraph.
+///
+/// When `provider` is `None`, falls back to a no-LLM path: keep recent
+/// verbatim and drop archived turns entirely. Still effective; just coarser.
+///
+/// # Errors
+///
+/// Returns `Err` if the LLM provider fails on an aging- or archived-tier
+/// summary call.
 pub fn apply(
     context: &Context,
     provider: Option<&dyn LlmProvider>,

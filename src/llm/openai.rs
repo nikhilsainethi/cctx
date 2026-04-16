@@ -10,6 +10,10 @@ use reqwest::blocking::Client;
 
 use super::LlmProvider;
 
+/// LLM provider backed by OpenAI's `/v1/chat/completions` endpoint.
+///
+/// Sends system and user messages as separate chat messages. Uses
+/// `reqwest::blocking::Client`, 120s timeout.
 pub struct OpenAILlm {
     client: Client,
     api_key: String,
@@ -18,6 +22,7 @@ pub struct OpenAILlm {
 }
 
 impl OpenAILlm {
+    /// Build a provider with an explicit API key, model, and temperature.
     pub fn new(api_key: &str, model: &str, temperature: f64) -> Self {
         OpenAILlm {
             client: Client::builder()
@@ -30,14 +35,22 @@ impl OpenAILlm {
         }
     }
 
-    /// Default: gpt-4o-mini, temperature 0.3. Reads key from OPENAI_API_KEY.
+    /// Read `OPENAI_API_KEY` from the environment and use `gpt-4o-mini` at T=0.3.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `OPENAI_API_KEY` is not set.
     pub fn from_env() -> Result<Self> {
         let key = std::env::var("OPENAI_API_KEY")
             .context("OPENAI_API_KEY not set. Export it or use --llm-provider ollama.")?;
         Ok(Self::new(&key, "gpt-4o-mini", 0.3))
     }
 
-    /// From env with custom model.
+    /// Same as [`Self::from_env`] but with a caller-chosen model name.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `OPENAI_API_KEY` is not set.
     pub fn from_env_with_model(model: &str) -> Result<Self> {
         let key = std::env::var("OPENAI_API_KEY")
             .context("OPENAI_API_KEY not set. Export it or use --llm-provider ollama.")?;

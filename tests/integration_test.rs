@@ -299,7 +299,7 @@ fn system_message_survives_all_strategies() {
             m["role"].as_str() == Some("system")
                 && m["content"]
                     .as_str()
-                    .map_or(false, |c| c.contains("database expert"))
+                    .is_some_and(|c| c.contains("database expert"))
         });
         assert!(
             has_system,
@@ -326,7 +326,7 @@ fn system_message_survives_all_strategies() {
         m["role"].as_str() == Some("system")
             && m["content"]
                 .as_str()
-                .map_or(false, |c| c.contains("database expert"))
+                .is_some_and(|c| c.contains("database expert"))
     });
     assert!(has_system, "system message missing after aggressive preset");
 

@@ -4,21 +4,19 @@ use crate::core::context::{Chunk, Context};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Apply bookend reordering with optional query-based relevance scoring.
+/// Apply bookend reordering to `context`, returning a new chunk list.
 ///
-/// When `query` is Some: rescore every chunk using TF-IDF against the query
-/// so chunks that answer the user's question get placed at the bookends.
+/// Scoring:
 ///
-/// When `query` is None: use an improved heuristic — system messages and the
-/// last 3 user messages get highest priority (they represent the most recent
-/// intent), everything else scored by recency.
+/// - `query = Some(q)` — rescore every chunk via TF-IDF against `q` so
+///   chunks that answer the user's question land at the bookends.
+/// - `query = None` — system messages and the last 3 user messages get
+///   highest priority (recent intent); everything else decays by recency.
 ///
-/// Then apply the alternating-placement algorithm (Liu et al., TACL 2024):
-///   rank 1 → position 0, rank 2 → position N-1, rank 3 → position 1, …
-///
-/// `Option<&str>` is Rust's idiomatic "maybe a string":
-///   - Some("how do I handle refunds?") → query provided
-///   - None → no query, use heuristic
+/// Placement uses the alternating algorithm from Liu et al.
+/// (*Lost in the Middle*, TACL 2024):
+/// rank 1 → position 0, rank 2 → position N-1, rank 3 → position 1, and so on.
+/// Zero token delta; the rewrite is purely positional.
 pub fn apply(context: &Context, query: Option<&str>) -> Vec<Chunk> {
     let mut chunks = context.chunks.clone();
 

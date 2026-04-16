@@ -14,8 +14,11 @@ use super::metrics::Metrics;
 /// Number of lines the dashboard renders (for cursor-up calculation).
 const DASHBOARD_LINES: usize = 9;
 
-/// Render one frame of the dashboard to stderr. On subsequent calls,
-/// moves the cursor up to overwrite the previous frame.
+/// Render one frame of the dashboard to stderr.
+///
+/// On the first call, draws a fresh box. On subsequent calls, moves the
+/// cursor up by the dashboard height and redraws in place. Pass `first`
+/// as `true` exactly once, per server startup.
 pub fn render(metrics: &Arc<Metrics>, first: bool) {
     let snap = metrics.snapshot();
 
@@ -120,5 +123,9 @@ fn format_number(n: u64) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+    if s.len() <= max {
+        s
+    } else {
+        &s[..max]
+    }
 }

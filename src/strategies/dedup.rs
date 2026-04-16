@@ -10,10 +10,13 @@ use anyhow::Result;
 
 use crate::core::context::{Chunk, Context};
 use crate::core::tokenizer::Tokenizer;
-use crate::embeddings::{EmbeddingProvider, cosine_similarity};
+use crate::embeddings::{cosine_similarity, EmbeddingProvider};
 
-/// Exact-match deduplication — removes chunks with identical content.
-/// First occurrence is kept; subsequent duplicates are dropped.
+/// Exact-match deduplication — drop chunks whose `content` has already appeared.
+///
+/// The first occurrence is always kept; every subsequent chunk with byte-
+/// identical content is removed. This is the fallback path when no embedding
+/// provider is configured; for semantic deduplication, use [`apply_semantic`].
 pub fn apply(context: &Context) -> Vec<Chunk> {
     let mut seen = HashSet::new();
     context
@@ -24,19 +27,25 @@ pub fn apply(context: &Context) -> Vec<Chunk> {
         .collect()
 }
 
-/// Semantic deduplication — uses embeddings to find and merge near-duplicates.
+/// Semantic deduplication — merge chunks whose embeddings are nearly identical.
 ///
 /// Algorithm:
-///   1. Embed all chunk contents
-///   2. Compute pairwise cosine similarity
-///   3. For each pair above `threshold`:
-///      a. Keep the longer chunk (more detail = more value)
-///      b. Split the shorter chunk into sentences
-///      c. Embed each sentence and compare against the longer chunk
-///      d. Sentences with similarity < 0.7 contain unique info → append them
-///      e. Mark the shorter chunk for removal
-///   4. Recount tokens for any modified chunks
-///   5. Return the deduplicated context
+///
+/// 1. Embed every chunk's content in a single batch call.
+/// 2. Compute pairwise cosine similarity.
+/// 3. For each pair above `threshold`:
+///    - Keep the longer chunk (more detail = more value).
+///    - Split the shorter chunk into sentences, embed each, and append
+///      sentences whose similarity against the longer chunk is below 0.7
+///      (they carry unique information).
+///    - Mark the shorter chunk for removal.
+/// 4. Recount tokens for any chunk whose content grew.
+///
+/// # Errors
+///
+/// Returns `Err` if the embedding provider fails or returns a different
+/// number of embeddings than chunks — typically a provider configuration
+/// or network issue.
 pub fn apply_semantic(
     context: &Context,
     provider: &dyn EmbeddingProvider,

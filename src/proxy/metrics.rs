@@ -1,18 +1,23 @@
 //! Comprehensive proxy metrics — thread-safe counters and per-model stats.
 //!
-//! Atomic counters (AtomicU64) for high-frequency counters that don't need
-//! grouping. Mutex<HashMap> for per-model and per-strategy breakdowns where
+//! Atomic counters (`AtomicU64`) for high-frequency counters that don't need
+//! grouping. `Mutex<HashMap>` for per-model and per-strategy breakdowns where
 //! we need key-value tracking with occasional writes.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use serde::Serialize;
 
 // ── Model pricing (USD per 1M input tokens) ──────────────────────────────────
 
+/// Estimated USD price per 1M input tokens for a known model.
+///
+/// Unknown models fall back to `1.00` USD / 1M tokens — a conservative
+/// estimate used for the cost-savings display. Values updated manually; not
+/// a source of truth for billing.
 pub fn model_price_per_million(model: &str) -> f64 {
     match model {
         "gpt-4o" => 2.50,
@@ -29,6 +34,10 @@ pub fn model_price_per_million(model: &str) -> f64 {
 
 // ── Live metrics ──────────────────────────────────────────────────────────────
 
+/// Thread-safe metrics store used by the proxy request handler and dashboard.
+///
+/// Atomic counters for hot-path increments, `Mutex<HashMap>` for per-model
+/// and per-strategy breakdowns. Cloned into request handlers via `Arc`.
 pub struct Metrics {
     started_at: Instant,
 
@@ -55,17 +64,25 @@ pub struct Metrics {
     pub last_request: Mutex<Option<LastRequest>>,
 }
 
+/// Snapshot of the most recent request, surfaced in the dashboard.
 #[derive(Clone, Serialize)]
 pub struct LastRequest {
+    /// Model name the request targeted.
     pub model: String,
+    /// Input tokens before optimization.
     pub original_tokens: u64,
+    /// Input tokens after optimization.
     pub optimized_tokens: u64,
+    /// Wall-clock latency of the optimization pass, in milliseconds.
     pub latency_ms: u64,
 }
 
+/// Aggregate stats for one model (request count + total tokens saved).
 #[derive(Default, Clone)]
 pub struct ModelStats {
+    /// Number of requests that hit this model.
     pub requests: u64,
+    /// Total input tokens saved by the optimization pipeline.
     pub tokens_saved: u64,
 }
 
@@ -127,9 +144,11 @@ impl Metrics {
         }
 
         // Per-strategy counts.
-        if was_optimized && let Ok(mut map) = self.strategies_applied.lock() {
-            for name in strategies {
-                *map.entry(name.clone()).or_default() += 1;
+        if was_optimized {
+            if let Ok(mut map) = self.strategies_applied.lock() {
+                for name in strategies {
+                    *map.entry(name.clone()).or_default() += 1;
+                }
             }
         }
 
@@ -151,11 +170,14 @@ impl Metrics {
         }
     }
 
+    /// Increment the streaming-request counter. Called once per SSE request
+    /// in addition to [`Self::record_request`].
     pub fn record_streaming(&self) {
         self.requests_streaming.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Take a consistent snapshot for the /cctx/metrics endpoint.
+    /// Build a consistent snapshot of all counters for the `/cctx/metrics`
+    /// endpoint response.
     pub fn snapshot(&self) -> MetricsSnapshot {
         let original = self.tokens_input_original.load(Ordering::Relaxed);
         let optimized = self.tokens_input_optimized.load(Ordering::Relaxed);
@@ -226,7 +248,8 @@ impl Metrics {
         }
     }
 
-    /// Reset all counters (for /cctx/metrics/reset).
+    /// Zero every counter and clear every map. Wired to the
+    /// `/cctx/metrics/reset` endpoint.
     pub fn reset(&self) {
         self.requests_total.store(0, Ordering::Relaxed);
         self.requests_optimized.store(0, Ordering::Relaxed);
@@ -252,44 +275,70 @@ impl Metrics {
 
 // ── Serializable snapshot ─────────────────────────────────────────────────────
 
+/// Serializable top-level structure returned by `GET /cctx/metrics`.
 #[derive(Serialize)]
 pub struct MetricsSnapshot {
+    /// Server uptime in seconds.
     pub uptime_seconds: u64,
+    /// Average optimization-pipeline latency, in milliseconds.
     pub avg_optimize_latency_ms: f64,
+    /// The most recent request, or `None` if none have been served.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_request: Option<LastRequest>,
+    /// Request-count breakdown.
     pub requests: RequestsSnapshot,
+    /// Token-count breakdown.
     pub tokens: TokensSnapshot,
+    /// Estimated cost savings.
     pub cost: CostSnapshot,
+    /// How many times each strategy name was applied.
     pub strategies: HashMap<String, u64>,
 }
 
+/// Per-category request counts.
 #[derive(Serialize)]
 pub struct RequestsSnapshot {
+    /// Total requests served.
     pub total: u64,
+    /// Requests where the optimization pipeline produced a rewrite.
     pub optimized: u64,
+    /// Requests forwarded without optimization (non-chat paths, or empty input).
     pub passthrough: u64,
+    /// Requests where optimization failed and we fell back to passthrough.
     pub failed: u64,
+    /// Streaming (SSE) request count.
     pub streaming: u64,
 }
 
+/// Token counts across every chat request.
 #[derive(Serialize)]
 pub struct TokensSnapshot {
+    /// Input tokens before optimization.
     pub input_original: u64,
+    /// Input tokens after optimization.
     pub input_optimized: u64,
+    /// `input_original - input_optimized`.
     pub saved: u64,
+    /// `optimized / original`, rounded to 3 decimal places. `1.0` when no data yet.
     pub compression_ratio: f64,
 }
 
+/// Estimated cost savings, overall and per-model.
 #[derive(Serialize)]
 pub struct CostSnapshot {
+    /// Total estimated USD saved across all models.
     pub estimated_saved_usd: f64,
+    /// Breakdown by model name.
     pub by_model: HashMap<String, ModelCostSnapshot>,
 }
 
+/// One model's estimated savings.
 #[derive(Serialize)]
 pub struct ModelCostSnapshot {
+    /// Requests routed to this model.
     pub requests: u64,
+    /// Input tokens saved by optimization for this model.
     pub tokens_saved: u64,
+    /// Estimated USD saved, rounded to cents.
     pub saved_usd: f64,
 }

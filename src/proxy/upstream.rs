@@ -5,12 +5,18 @@ use std::time::Duration;
 use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
 use reqwest::Client;
 
+/// Async HTTP client used by the proxy to forward requests to the upstream
+/// LLM API. Configured with connection + overall timeouts.
 pub struct UpstreamClient {
     client: Client,
     base_url: String,
 }
 
 impl UpstreamClient {
+    /// Build a client targeting `base_url` with the given overall timeout.
+    ///
+    /// Connection timeout is fixed at 10 seconds; falls back to the default
+    /// client if the configured one fails to build.
     pub fn new(base_url: &str, timeout_secs: u64) -> Self {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
@@ -23,7 +29,13 @@ impl UpstreamClient {
         }
     }
 
-    /// Forward a POST and buffer the entire response (non-streaming chat).
+    /// Forward a POST request, buffer the entire response body, and return
+    /// the status, response headers, and bytes. Used for non-streaming chat.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying `reqwest` error on network failure, timeout,
+    /// or malformed response.
     pub async fn forward(
         &self,
         path: &str,
@@ -38,7 +50,12 @@ impl UpstreamClient {
         Ok((status, resp_headers, resp_body))
     }
 
-    /// Forward a POST and return the raw response for streaming.
+    /// Forward a POST request and return the raw `reqwest::Response`, so the
+    /// caller can stream the body chunk-by-chunk (SSE).
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying `reqwest` error on network failure.
     pub async fn forward_streaming(
         &self,
         path: &str,
@@ -48,7 +65,12 @@ impl UpstreamClient {
         self.send_post(path, headers, body).await
     }
 
-    /// Forward any HTTP method to any path (catch-all passthrough).
+    /// Forward a request of any HTTP method to any upstream path. Used by
+    /// the catch-all route to proxy unrelated OpenAI endpoints.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying `reqwest` error on network failure.
     pub async fn passthrough_request(
         &self,
         method: Method,
@@ -110,16 +132,19 @@ fn convert_response_headers(src: &reqwest::header::HeaderMap) -> HeaderMap {
         ) {
             continue;
         }
-        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes())
-            && let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes())
-        {
-            dst.insert(n, v);
+        if let Ok(n) = HeaderName::from_bytes(name.as_str().as_bytes()) {
+            if let Ok(v) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
+                dst.insert(n, v);
+            }
         }
     }
     dst
 }
 
-/// Classify a reqwest error for appropriate HTTP status codes.
+/// Map a `reqwest` failure to an HTTP status + short error tag.
+///
+/// Maps timeouts to `504 Gateway Timeout`, connection failures to
+/// `502 Bad Gateway`, and everything else to `500 Internal Server Error`.
 pub fn classify_error(e: &reqwest::Error) -> (StatusCode, &'static str) {
     if e.is_timeout() {
         (StatusCode::GATEWAY_TIMEOUT, "upstream_timeout")

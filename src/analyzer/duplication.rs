@@ -7,9 +7,16 @@ use crate::core::context::Chunk;
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /// A detected pair of near-duplicate chunks with their Jaccard similarity.
+///
+/// Emitted by [`detect_duplicates`]; pairs are sorted by descending
+/// similarity so the most-duplicated content appears first. Indices refer
+/// to [`Chunk::index`] — the chunk's position in the *original* conversation,
+/// which may not equal its current position if a strategy has reordered them.
 #[derive(Serialize)]
 pub struct DuplicatePair {
+    /// Original index of the first chunk in the pair.
     pub chunk_a: usize,
+    /// Original index of the second chunk in the pair.
     pub chunk_b: usize,
     /// Jaccard similarity coefficient: 0.0 = no overlap, 1.0 = identical word sets.
     pub similarity: f64,
@@ -76,13 +83,34 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Detect near-duplicate chunk pairs.
+/// Detect near-duplicate chunk pairs via Jaccard similarity over word sets.
 ///
-/// Compares every pair of chunks (O(n^2) — fine for conversations with < 200 turns).
-/// Returns (pairs above threshold, estimated duplicate token count).
+/// Compares every pair of chunks in `O(n²)` time — fine for conversations
+/// with fewer than ~200 turns. Returns the set of pairs at or above
+/// `threshold` and an estimate of the total tokens accounted for by the
+/// redundancy (for the health-report metric).
 ///
-/// `&[Chunk]` is a *slice* — a borrowed view of a contiguous sequence.
-/// It works with Vec<Chunk>, arrays, or any contiguous collection.
+/// The word-set extraction lowercases, strips punctuation, and drops common
+/// English stop words so the similarity focuses on meaningful overlap.
+///
+/// # Examples
+///
+/// ```
+/// use cctx::analyzer::duplication::detect_duplicates;
+/// use cctx::core::context::{Chunk, AttentionZone};
+///
+/// let mk = |i, s: &str| Chunk {
+///     index: i, role: "user".into(), content: s.into(),
+///     token_count: s.len() / 4, relevance_score: 0.5,
+///     attention_zone: AttentionZone::Strong,
+/// };
+/// let chunks = vec![
+///     mk(0, "the quick brown fox jumped over the lazy dog"),
+///     mk(1, "the quick brown fox jumped over a sleepy dog"),
+/// ];
+/// let (pairs, _est) = detect_duplicates(&chunks, 0.5);
+/// assert_eq!(pairs.len(), 1);
+/// ```
 pub fn detect_duplicates(chunks: &[Chunk], threshold: f64) -> (Vec<DuplicatePair>, usize) {
     // Pre-compute word sets so each chunk is tokenized only once.
     let word_sets: Vec<HashSet<String>> =
