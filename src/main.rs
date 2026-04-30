@@ -325,6 +325,25 @@ enum Commands {
         command: ModelCommand,
     },
 
+    /// Pretty-print the most recent compaction loss report for a session.
+    ///
+    /// Reads `.cctx/loss-reports/<session_id>.json`, written by the
+    /// PostCompact hook after Day 24+ goes live. Output is a boxed
+    /// summary plus the top-N lost items by priority.
+    LossReport {
+        /// Session id (e.g. `abc123`). Matches the basename of the JSON file.
+        session_id: String,
+        /// Maximum number of lost items to render in the table.
+        #[arg(long, default_value_t = 10)]
+        top: usize,
+    },
+
+    /// Show the running history of compaction events for this project.
+    ///
+    /// Reads `.cctx/compaction-log.json` (appended-to by the PostCompact
+    /// hook). Each row: session, timestamp, item counts, injected tokens.
+    CompactionHistory,
+
     /// Compare two context files side-by-side (before vs after).
     ///
     /// Shows token changes, message differences, dead zone improvements,
@@ -571,6 +590,10 @@ fn main() -> Result<()> {
 
         Commands::Model { command } => cmd_model(command),
 
+        Commands::LossReport { session_id, top } => cmd_loss_report(&session_id, top),
+
+        Commands::CompactionHistory => cmd_compaction_history(),
+
         Commands::Fingerprint {
             file,
             tier,
@@ -806,6 +829,178 @@ fn unix_to_ymdhms(mut secs: i64) -> (i32, u32, u32, u32, u32, u32) {
         m_idx += 1;
     }
     (y, m_idx as u32 + 1, days as u32 + 1, h, mn, s)
+}
+
+// ── Loss-report + compaction-history commands ────────────────────────────────
+
+fn cmd_loss_report(session_id: &str, top: usize) -> Result<()> {
+    use cctx::compaction::{ClassifiedItem, LossClassification, LossReport};
+    use owo_colors::OwoColorize;
+
+    let project_dir = std::env::current_dir().context("Cannot determine current directory")?;
+    let report: LossReport = match cctx::state::store::load_loss_report(&project_dir, session_id)? {
+        Some(r) => r,
+        None => {
+            eprintln!(
+                "[cctx] No loss report found for session `{}`.\n\
+                 Run a compaction (PostCompact hook) on this session first.",
+                session_id
+            );
+            return Ok(());
+        }
+    };
+
+    let pct = |n: usize| -> String {
+        if report.total_fingerprinted == 0 {
+            return "—".to_string();
+        }
+        format!("({}%)", (n * 100) / report.total_fingerprinted.max(1))
+    };
+
+    let w = 56usize;
+    println!("╭{}╮", "─".repeat(w));
+    println!(
+        "│  {:<width$}│",
+        format!("Compaction Loss Report — session {}", report.session_id),
+        width = w - 2
+    );
+    println!("├{}┤", "─".repeat(w));
+    println!(
+        "│  {:<width$}│",
+        format!("Trigger:        {}", report.compaction_trigger),
+        width = w - 2
+    );
+    println!(
+        "│  {:<width$}│",
+        format!("Fingerprinted:  {} items", report.total_fingerprinted),
+        width = w - 2
+    );
+    println!(
+        "│  {:<width$}│",
+        format!(
+            "Preserved:      {:<3} {}",
+            report.preserved_count,
+            pct(report.preserved_count)
+        ),
+        width = w - 2
+    );
+    println!(
+        "│  {:<width$}│",
+        format!(
+            "Paraphrased:    {:<3} {}",
+            report.paraphrased_count,
+            pct(report.paraphrased_count)
+        ),
+        width = w - 2
+    );
+    println!(
+        "│  {:<width$}│",
+        format!(
+            "Lost:           {:<3} {}",
+            report.lost_count,
+            pct(report.lost_count)
+        ),
+        width = w - 2
+    );
+    println!(
+        "│  {:<width$}│",
+        format!(
+            "Compression:    {} → {} tokens ({:.0}%)",
+            report.pre_compaction_tokens,
+            report.post_compaction_tokens,
+            report.compression_ratio * 100.0
+        ),
+        width = w - 2
+    );
+
+    let lost: Vec<&ClassifiedItem> = report
+        .items
+        .iter()
+        .filter(|c| c.classification == LossClassification::Lost)
+        .collect();
+    if !lost.is_empty() {
+        println!("├{}┤", "─".repeat(w));
+        println!("│  {:<width$}│", "Top Lost Items:", width = w - 2);
+        for (i, ci) in lost.iter().take(top).enumerate() {
+            let cat = format!("[{}]", category_short(&ci.fingerprint_item.category));
+            let preview: String = ci.fingerprint_item.content.chars().take(w - 12).collect();
+            println!(
+                "│  {:<width$}│",
+                format!("{:>2}. {} {}", i + 1, cat.red(), preview),
+                width = w - 2
+            );
+            println!(
+                "│  {:<width$}│",
+                format!(
+                    "    Priority: {:.2} | Overlap: {:.2}",
+                    ci.fingerprint_item.priority_score, ci.overlap_score
+                ),
+                width = w - 2
+            );
+        }
+        if lost.len() > top {
+            println!(
+                "│  {:<width$}│",
+                format!("    … and {} more", lost.len() - top),
+                width = w - 2
+            );
+        }
+    }
+    println!("╰{}╯", "─".repeat(w));
+    Ok(())
+}
+
+fn category_short(category: &cctx::fingerprint::ItemCategory) -> &'static str {
+    use cctx::fingerprint::ItemCategory;
+    match category {
+        ItemCategory::Constraint => "CONSTRAINT",
+        ItemCategory::Decision => "DECISION",
+        ItemCategory::TechnicalFact => "TECHNICAL",
+        ItemCategory::DebugInsight => "DEBUG",
+        ItemCategory::ProgressMarker => "PROGRESS",
+        ItemCategory::Other => "ITEM",
+    }
+}
+
+fn cmd_compaction_history() -> Result<()> {
+    let project_dir = std::env::current_dir().context("Cannot determine current directory")?;
+    let log_path = cctx::state::store::state_root(&project_dir).join("compaction-log.json");
+    let history = cctx::state::history::read_history(&log_path)?;
+
+    if history.is_empty() {
+        eprintln!(
+            "[cctx] No compaction events recorded yet.\n\
+             Once compactions run, history shows up at {}",
+            log_path.display()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "  {:<10} {:<25} {:>5} {:>9} {:>5} {:>10}",
+        "Session", "Timestamp", "Items", "Preserved", "Lost", "Injected"
+    );
+    println!("  {}", "─".repeat(70));
+    for evt in &history {
+        let pres_pct = if evt.total_items > 0 {
+            (evt.preserved * 100) / evt.total_items
+        } else {
+            0
+        };
+        // Trim long session ids for table fit; they're hex hashes.
+        let short_session: String = evt.session_id.chars().take(10).collect();
+        println!(
+            "  {:<10} {:<25} {:>5} {:>3} ({:>2}%) {:>5} {:>6} tok",
+            short_session,
+            evt.timestamp,
+            evt.total_items,
+            evt.preserved,
+            pres_pct,
+            evt.lost,
+            evt.injection_tokens,
+        );
+    }
+    Ok(())
 }
 
 // ── Model command ─────────────────────────────────────────────────────────────

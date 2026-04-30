@@ -218,6 +218,28 @@ pub fn save_loss_report(project_dir: &Path, session_id: &str, report: &LossRepor
     Ok(())
 }
 
+/// Load the loss report for `session_id`, if one has been saved.
+///
+/// Returns `Ok(None)` when the file is absent — callers like
+/// `cctx loss-report` treat that as "no compaction has run yet for
+/// this session" and surface a friendly hint.
+///
+/// # Errors
+///
+/// Returns `Err` only when the file exists but is unreadable or
+/// contains invalid JSON.
+pub fn load_loss_report(project_dir: &Path, session_id: &str) -> Result<Option<LossReport>> {
+    let path = loss_reports_dir(project_dir).join(format!("{}.json", sanitize(session_id)));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("Cannot read loss report {}", path.display()))?;
+    let report: LossReport = serde_json::from_str(&raw)
+        .with_context(|| format!("Invalid loss-report JSON in {}", path.display()))?;
+    Ok(Some(report))
+}
+
 // ── Pending injection ─────────────────────────────────────────────────────────
 
 /// Write a one-shot recovery payload for the next SessionStart hook to
@@ -501,7 +523,7 @@ mod tests {
             paraphrased_count: 1,
             lost_count: 2,
             preservation_ratio: 0.7,
-            lost_items: vec![],
+            items: vec![],
         };
         save_loss_report(&project, "session_y", &report).unwrap();
 
