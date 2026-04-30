@@ -62,6 +62,21 @@ impl InputFormatArg {
     }
 }
 
+/// Subcommands under `cctx bench`.
+#[derive(Subcommand)]
+enum BenchCommand {
+    /// Synthesize a JSONL transcript with a fixed seed (deterministic).
+    Generate {
+        /// Approximate number of entries to emit. Tool-use pairs
+        /// can shift the actual count by ±1.
+        #[arg(long)]
+        messages: usize,
+        /// Output JSONL file path.
+        #[arg(long)]
+        output: PathBuf,
+    },
+}
+
 /// Subcommands under `cctx hook`.
 #[derive(Subcommand)]
 enum HookCommand {
@@ -325,6 +340,17 @@ enum Commands {
         /// Overwrite an existing .cctx.toml.
         #[arg(long, default_value_t = false)]
         force: bool,
+    },
+
+    /// Generate / time benchmark transcripts.
+    ///
+    /// `cctx bench generate --messages N --output FILE` synthesizes
+    /// a JSONL transcript with realistic content + a fixed set of
+    /// known facts at predictable positions. Use it as input to
+    /// `cctx fingerprint` for performance / accuracy benchmarking.
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommand,
     },
 
     /// Manage downloaded ML models for higher-tier fingerprinting.
@@ -655,6 +681,18 @@ fn main() -> Result<()> {
         Commands::Init { force } => cmd_init(force),
 
         Commands::Model { command } => cmd_model(command),
+
+        Commands::Bench { command } => match command {
+            BenchCommand::Generate { messages, output } => {
+                cctx::bench::generate(messages, &output)?;
+                eprintln!(
+                    "[cctx] Wrote {} (~{} entries) for benchmarking.",
+                    output.display(),
+                    messages
+                );
+                Ok(())
+            }
+        },
 
         Commands::LossReport { session_id, top } => cmd_loss_report(&session_id, top),
 

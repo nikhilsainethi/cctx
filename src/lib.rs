@@ -1,6 +1,7 @@
 // lib.rs is the root of the library crate. main.rs imports from here via `use cctx::...`.
 // `pub mod` makes a module public — without `pub`, code in other crates can't see it.
 pub mod analyzer;
+pub mod bench;
 pub mod compaction;
 pub mod config;
 pub mod core;
