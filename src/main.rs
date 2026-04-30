@@ -851,10 +851,13 @@ fn cmd_loss_report(session_id: &str, top: usize) -> Result<()> {
     };
 
     let pct = |n: usize| -> String {
-        if report.total_fingerprinted == 0 {
-            return "—".to_string();
+        // checked_div returns None on /0 — keeps clippy's
+        // manual_checked_ops happy and avoids the redundant
+        // .max(1) guard.
+        match (n * 100).checked_div(report.total_fingerprinted) {
+            Some(p) => format!("({}%)", p),
+            None => "—".to_string(),
         }
-        format!("({}%)", (n * 100) / report.total_fingerprinted.max(1))
     };
 
     let w = 56usize;
@@ -982,11 +985,9 @@ fn cmd_compaction_history() -> Result<()> {
     );
     println!("  {}", "─".repeat(70));
     for evt in &history {
-        let pres_pct = if evt.total_items > 0 {
-            (evt.preserved * 100) / evt.total_items
-        } else {
-            0
-        };
+        // checked_div returns None on /0 — cleaner than the manual
+        // `if total > 0 { ... } else { 0 }` pattern (clippy::manual_checked_ops).
+        let pres_pct = (evt.preserved * 100).checked_div(evt.total_items).unwrap_or(0);
         // Trim long session ids for table fit; they're hex hashes.
         let short_session: String = evt.session_id.chars().take(10).collect();
         println!(
