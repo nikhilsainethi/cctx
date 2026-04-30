@@ -987,7 +987,9 @@ fn cmd_compaction_history() -> Result<()> {
     for evt in &history {
         // checked_div returns None on /0 — cleaner than the manual
         // `if total > 0 { ... } else { 0 }` pattern (clippy::manual_checked_ops).
-        let pres_pct = (evt.preserved * 100).checked_div(evt.total_items).unwrap_or(0);
+        let pres_pct = (evt.preserved * 100)
+            .checked_div(evt.total_items)
+            .unwrap_or(0);
         // Trim long session ids for table fit; they're hex hashes.
         let short_session: String = evt.session_id.chars().take(10).collect();
         println!(
