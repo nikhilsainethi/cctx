@@ -365,10 +365,12 @@ mod tests {
                 occurrence_count: 1,
                 source_positions: vec![5],
                 priority_score: 0.9,
+                extraction_method: "test".into(),
                 scores: ItemScores {
                     uniqueness: 1.0,
                     recency: 0.9,
                     position_risk: 1.0,
+                    textrank_boost: 0.0,
                 },
             }],
         }

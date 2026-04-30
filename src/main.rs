@@ -266,6 +266,30 @@ enum Commands {
         llm_model: Option<String>,
     },
 
+    /// Build a Tier-0 fingerprint from a transcript file.
+    ///
+    /// Runs the multi-layer extractor (regex + keyword triggers + RAKE)
+    /// over the conversation, deduplicates near-duplicate items, scores
+    /// by uniqueness × recency × position-risk + RAKE boost, and emits
+    /// the result as JSON (default) or a pretty terminal view.
+    Fingerprint {
+        /// Transcript file (JSONL or any cctx-supported chat format).
+        file: PathBuf,
+        /// Tier of fingerprinting. Only `0` (zero-ML) is implemented today.
+        #[arg(long, default_value_t = 0)]
+        tier: u32,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        format: OutputFormat,
+        /// Optional path to write the fingerprint JSON to. Stdout if absent.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Override the session id stamped into the fingerprint.
+        /// Defaults to the file stem (e.g. "session-abc" for "session-abc.jsonl").
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+
     /// Write a commented `.cctx.toml` into the current directory.
     ///
     /// Every setting is commented out — uncomment what you need. Refuses to
@@ -520,6 +544,20 @@ fn main() -> Result<()> {
 
         Commands::Init { force } => cmd_init(force),
 
+        Commands::Fingerprint {
+            file,
+            tier,
+            format,
+            output,
+            session_id,
+        } => cmd_fingerprint(
+            &file,
+            tier,
+            format,
+            output.as_deref(),
+            session_id.as_deref(),
+        ),
+
         Commands::Watch {
             file,
             interval,
@@ -575,6 +613,169 @@ fn main() -> Result<()> {
             })
         }
     }
+}
+
+// ── Fingerprint command ───────────────────────────────────────────────────────
+
+fn cmd_fingerprint(
+    file: &Path,
+    tier: u32,
+    format: OutputFormat,
+    output: Option<&Path>,
+    session_id: Option<&str>,
+) -> Result<()> {
+    if tier != 0 {
+        anyhow::bail!(
+            "tier {} not implemented — only Tier 0 (zero-ML, regex+keyword+RAKE) ships today",
+            tier
+        );
+    }
+
+    // Read + auto-detect format like `cctx analyze` does.
+    let raw = read_file(&file.to_path_buf())?;
+    let context = if is_jsonl_transcript(Some(file), &raw) {
+        build_context_from_transcript(&raw)?
+    } else {
+        build_context(&raw, None)?
+    };
+
+    let session_id = session_id.map(str::to_string).unwrap_or_else(|| {
+        file.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("session")
+            .to_string()
+    });
+
+    let config = cctx::fingerprint::FingerprintConfig::default();
+    let created_at = now_iso8601();
+    let fp = cctx::fingerprint::fingerprint(&context, &config, &session_id, &created_at);
+
+    // ── Emit ──────────────────────────────────────────────────────────────────
+    match format {
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&fp)
+                .context("Failed to serialize fingerprint to JSON")?;
+            match output {
+                Some(p) => {
+                    std::fs::write(p, &json)
+                        .with_context(|| format!("Cannot write fingerprint to {}", p.display()))?;
+                    eprintln!("Wrote fingerprint to {}", p.display());
+                }
+                None => println!("{}", json),
+            }
+        }
+        OutputFormat::Terminal => print_fingerprint_terminal(&fp),
+    }
+
+    let high_priority = fp.items.iter().filter(|i| i.priority_score >= 0.5).count();
+    eprintln!(
+        "[cctx] Fingerprinted {} items ({} high-priority) across {} messages",
+        fp.total_items,
+        high_priority,
+        context.chunk_count(),
+    );
+    Ok(())
+}
+
+/// Pretty-print the top items to stdout for human inspection.
+fn print_fingerprint_terminal(fp: &cctx::fingerprint::Fingerprint) {
+    use owo_colors::OwoColorize;
+
+    println!();
+    println!(
+        "  {} {} items, {} tokens, session = {}",
+        "Fingerprint".bold(),
+        fp.total_items,
+        fp.total_tokens,
+        fp.session_id
+    );
+    println!("  {}", "─".repeat(78));
+    if fp.items.is_empty() {
+        println!("  (no items extracted)");
+        println!();
+        return;
+    }
+
+    for (i, item) in fp.items.iter().take(20).enumerate() {
+        let cat = format!("{:?}", item.category);
+        let cat_colored = match item.category {
+            cctx::fingerprint::ItemCategory::Constraint => cat.red().to_string(),
+            cctx::fingerprint::ItemCategory::Decision => cat.cyan().to_string(),
+            cctx::fingerprint::ItemCategory::TechnicalFact => cat.green().to_string(),
+            cctx::fingerprint::ItemCategory::DebugInsight => cat.magenta().to_string(),
+            cctx::fingerprint::ItemCategory::ProgressMarker => cat.yellow().to_string(),
+            cctx::fingerprint::ItemCategory::Other => cat.dimmed().to_string(),
+        };
+        let preview: String = item.content.chars().take(70).collect();
+        let trunc = if item.content.chars().count() > 70 {
+            "…"
+        } else {
+            ""
+        };
+        println!(
+            "  {:>2}. [{:.2}] {:<14} {}{}",
+            i + 1,
+            item.priority_score,
+            cat_colored,
+            preview,
+            trunc,
+        );
+    }
+    if fp.items.len() > 20 {
+        println!("  … and {} more", fp.items.len() - 20);
+    }
+    println!();
+}
+
+/// Minimal ISO-8601 UTC timestamp without pulling in chrono. Format:
+/// `YYYY-MM-DDTHH:MM:SSZ`. Good enough for human reading and lexicographic sort.
+fn now_iso8601() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, m, d, h, mn, s) = unix_to_ymdhms(secs as i64);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, mn, s)
+}
+
+/// Convert UNIX epoch seconds to `(year, month, day, hour, minute, second)`
+/// in UTC. Manual implementation so we don't depend on chrono.
+fn unix_to_ymdhms(mut secs: i64) -> (i32, u32, u32, u32, u32, u32) {
+    let s = (secs.rem_euclid(60)) as u32;
+    secs = secs.div_euclid(60);
+    let mn = (secs.rem_euclid(60)) as u32;
+    secs = secs.div_euclid(60);
+    let h = (secs.rem_euclid(24)) as u32;
+    let mut days = secs.div_euclid(24);
+
+    // Days since 1970-01-01.
+    // Walk forward through years and months — fine at chat-session timescales.
+    let mut y: i32 = 1970;
+    loop {
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let in_year = if leap { 366 } else { 365 };
+        if days < in_year {
+            break;
+        }
+        days -= in_year;
+        y += 1;
+    }
+    let mlen = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let mut m_idx = 0;
+    while m_idx < 12 {
+        let mut len = mlen[m_idx];
+        if m_idx == 1 && leap {
+            len = 29;
+        }
+        if days < len {
+            break;
+        }
+        days -= len;
+        m_idx += 1;
+    }
+    (y, m_idx as u32 + 1, days as u32 + 1, h, mn, s)
 }
 
 // ── Init command ──────────────────────────────────────────────────────────────

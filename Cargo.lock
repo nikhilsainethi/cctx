@@ -247,8 +247,10 @@ dependencies = [
  "axum",
  "clap",
  "criterion",
+ "keyword_extraction",
  "owo-colors",
  "predicates",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -878,6 +880,16 @@ dependencies = [
  "futures-util",
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "keyword_extraction"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bab83c382982b79063036f88b9e722b899c23e750f1318ceead83ccd7413f874"
+dependencies = [
+ "regex",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -1822,6 +1834,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9629274872b2bfaf8d66f5f15725007f635594914870f65218920345aa11aa8c"
 
 [[package]]
 name = "untrusted"

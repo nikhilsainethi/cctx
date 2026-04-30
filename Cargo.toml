@@ -41,6 +41,16 @@ owo-colors = "4"
 # toml: parses .cctx.toml / ~/.config/cctx/config.toml. Pure Rust, no deps.
 toml = "0.8"
 
+# regex: pattern-based extraction in the Tier-0 fingerprint engine
+# (port numbers, file paths, URLs, IP addresses, version strings, …).
+regex = "1.12"
+
+# keyword_extraction: RAKE for the layer-3 keyphrase fallback in the
+# fingerprint engine. NOTE: licensed LGPL-3.0-or-later — re-distribution
+# of cctx must include the crate source (crates.io serves it) per the
+# usual LGPL relinking obligation.
+keyword_extraction = { version = "1.5", default-features = false, features = ["rake"] }
+
 # ── Optional proxy dependencies (only compiled with --features proxy) ──────
 #
 # `optional = true` means the crate is only compiled when a feature that
