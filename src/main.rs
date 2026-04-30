@@ -62,6 +62,17 @@ impl InputFormatArg {
     }
 }
 
+/// Subcommands under `cctx hook`.
+#[derive(Subcommand)]
+enum HookCommand {
+    /// Phase 1: snapshot the transcript before compaction runs.
+    PreCompact,
+    /// Phase 2: diff the fingerprint against the compaction summary.
+    PostCompact,
+    /// Phase 3: deliver any queued recovery payload on the next user prompt.
+    UserPrompt,
+}
+
 /// Subcommands under `cctx model`.
 #[derive(Subcommand)]
 enum ModelCommand {
@@ -344,6 +355,61 @@ enum Commands {
     /// hook). Each row: session, timestamp, item counts, injected tokens.
     CompactionHistory,
 
+    /// Internal: receives a hook payload on stdin from Claude Code.
+    ///
+    /// Wired up by `cctx install-hooks`. Each subcommand corresponds
+    /// to one Claude Code hook event:
+    ///
+    /// - `pre-compact`: PreCompact — fingerprint the transcript.
+    /// - `post-compact`: PostCompact — diff fingerprint vs summary,
+    ///   queue recovery payload, append to compaction log.
+    /// - `user-prompt`: UserPromptSubmit — deliver any queued payload.
+    ///
+    /// You generally don't run these by hand; they're invoked by the
+    /// hook config. They never exit non-zero with code 2 (which would
+    /// block compaction); errors are logged and exit 1.
+    Hook {
+        #[command(subcommand)]
+        command: HookCommand,
+    },
+
+    /// Install cctx hooks into a Claude Code settings file.
+    ///
+    /// Default scope is `--local` — `.claude/settings.local.json`,
+    /// the personal-not-committed location. Use `--project` to
+    /// share with the team (`.claude/settings.json`) or `--user`
+    /// for `~/.claude/settings.json`.
+    ///
+    /// Idempotent — re-running on an already-installed config is a
+    /// no-op. Other hooks in the same file are preserved.
+    InstallHooks {
+        /// `.claude/settings.local.json` — personal, not committed (default).
+        #[arg(long, conflicts_with_all = ["project", "user"])]
+        local: bool,
+        /// `.claude/settings.json` — committed, shared with the team.
+        #[arg(long, conflicts_with_all = ["local", "user"])]
+        project: bool,
+        /// `~/.claude/settings.json` — personal, applies to every project.
+        #[arg(long, conflicts_with_all = ["local", "project"])]
+        user: bool,
+    },
+
+    /// Remove cctx hooks from a Claude Code settings file.
+    ///
+    /// Surgical: only removes entries whose command starts with
+    /// `cctx hook`. All other hooks and settings are left untouched.
+    UninstallHooks {
+        /// `.claude/settings.local.json` (default).
+        #[arg(long, conflicts_with_all = ["project", "user"])]
+        local: bool,
+        /// `.claude/settings.json`.
+        #[arg(long, conflicts_with_all = ["local", "user"])]
+        project: bool,
+        /// `~/.claude/settings.json`.
+        #[arg(long, conflicts_with_all = ["local", "project"])]
+        user: bool,
+    },
+
     /// Compare two context files side-by-side (before vs after).
     ///
     /// Shows token changes, message differences, dead zone improvements,
@@ -594,6 +660,20 @@ fn main() -> Result<()> {
 
         Commands::CompactionHistory => cmd_compaction_history(),
 
+        Commands::Hook { command } => cmd_hook(command),
+
+        Commands::InstallHooks {
+            local: _,
+            project,
+            user,
+        } => cmd_install_hooks(scope_from_flags(project, user)),
+
+        Commands::UninstallHooks {
+            local: _,
+            project,
+            user,
+        } => cmd_uninstall_hooks(scope_from_flags(project, user)),
+
         Commands::Fingerprint {
             file,
             tier,
@@ -780,55 +860,50 @@ fn print_fingerprint_terminal(fp: &cctx::fingerprint::Fingerprint) {
     println!();
 }
 
-/// Minimal ISO-8601 UTC timestamp without pulling in chrono. Format:
-/// `YYYY-MM-DDTHH:MM:SSZ`. Good enough for human reading and lexicographic sort.
-fn now_iso8601() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let (y, m, d, h, mn, s) = unix_to_ymdhms(secs as i64);
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, mn, s)
+// `now_iso8601` lives in `cctx::state::store` so the hook handlers
+// (which need to stamp fingerprints, loss reports, and compaction-log
+// entries) can share the same formatter.
+use cctx::state::store::now_iso8601;
+
+// ── Hook handlers ─────────────────────────────────────────────────────────────
+
+fn cmd_hook(command: HookCommand) -> Result<()> {
+    use cctx::hooks;
+    match command {
+        HookCommand::PreCompact => {
+            let input = hooks::input::read_pre_compact()?;
+            hooks::pre_compact::handle(input)
+        }
+        HookCommand::PostCompact => {
+            let input = hooks::input::read_post_compact()?;
+            hooks::post_compact::handle(input)
+        }
+        HookCommand::UserPrompt => {
+            let input = hooks::input::read_user_prompt()?;
+            hooks::user_prompt::handle(input)
+        }
+    }
 }
 
-/// Convert UNIX epoch seconds to `(year, month, day, hour, minute, second)`
-/// in UTC. Manual implementation so we don't depend on chrono.
-fn unix_to_ymdhms(mut secs: i64) -> (i32, u32, u32, u32, u32, u32) {
-    let s = (secs.rem_euclid(60)) as u32;
-    secs = secs.div_euclid(60);
-    let mn = (secs.rem_euclid(60)) as u32;
-    secs = secs.div_euclid(60);
-    let h = (secs.rem_euclid(24)) as u32;
-    let mut days = secs.div_euclid(24);
+fn scope_from_flags(project: bool, user: bool) -> cctx::hooks::install::HookScope {
+    use cctx::hooks::install::HookScope;
+    if user {
+        HookScope::User
+    } else if project {
+        HookScope::Project
+    } else {
+        HookScope::Local
+    }
+}
 
-    // Days since 1970-01-01.
-    // Walk forward through years and months — fine at chat-session timescales.
-    let mut y: i32 = 1970;
-    loop {
-        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-        let in_year = if leap { 366 } else { 365 };
-        if days < in_year {
-            break;
-        }
-        days -= in_year;
-        y += 1;
-    }
-    let mlen = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    let mut m_idx = 0;
-    while m_idx < 12 {
-        let mut len = mlen[m_idx];
-        if m_idx == 1 && leap {
-            len = 29;
-        }
-        if days < len {
-            break;
-        }
-        days -= len;
-        m_idx += 1;
-    }
-    (y, m_idx as u32 + 1, days as u32 + 1, h, mn, s)
+fn cmd_install_hooks(scope: cctx::hooks::install::HookScope) -> Result<()> {
+    let project_dir = std::env::current_dir().context("Cannot determine current directory")?;
+    cctx::hooks::install::install(scope, &project_dir).map(|_| ())
+}
+
+fn cmd_uninstall_hooks(scope: cctx::hooks::install::HookScope) -> Result<()> {
+    let project_dir = std::env::current_dir().context("Cannot determine current directory")?;
+    cctx::hooks::install::uninstall(scope, &project_dir)
 }
 
 // ── Loss-report + compaction-history commands ────────────────────────────────

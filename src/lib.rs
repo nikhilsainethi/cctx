@@ -7,6 +7,7 @@ pub mod core;
 pub mod embeddings;
 pub mod fingerprint;
 pub mod formats;
+pub mod hooks;
 pub mod llm;
 pub mod pipeline;
 pub mod state;

@@ -68,9 +68,7 @@ fn loss_reports_dir(project_dir: &Path) -> PathBuf {
 fn pending_injection_dir(project_dir: &Path) -> PathBuf {
     state_root(project_dir).join(PENDING_INJECTION_SUBDIR)
 }
-// Day 24's session-start hook archives delivered injections into this dir.
-// Day 21 only reserves the path during init().
-#[allow(dead_code)]
+/// Path to the injection-history archive subdirectory for `project_dir`.
 fn injection_history_dir(project_dir: &Path) -> PathBuf {
     state_root(project_dir).join(INJECTION_HISTORY_SUBDIR)
 }
@@ -259,6 +257,28 @@ pub fn save_pending_injection(project_dir: &Path, session_id: &str, payload: &st
     Ok(())
 }
 
+/// Archive a delivered injection payload into
+/// `.cctx/injection-history/{session_id}_{nanos}.json`.
+///
+/// Called by the UserPromptSubmit hook AFTER the payload is emitted
+/// to stdout — gives us a forensic record of "what did cctx tell the
+/// model" for later debugging.
+///
+/// # Errors
+///
+/// Returns `Err` if the directory can't be created or the file write fails.
+pub fn save_injection_history(project_dir: &Path, session_id: &str, payload: &str) -> Result<()> {
+    let dir = injection_history_dir(project_dir);
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("Cannot create injection-history dir {}", dir.display()))?;
+
+    let nanos = nanos_now();
+    let path = dir.join(format!("{}_{}.json", sanitize(session_id), nanos));
+    fs::write(&path, payload)
+        .with_context(|| format!("Cannot write injection history {}", path.display()))?;
+    Ok(())
+}
+
 /// Read AND remove the pending injection for `session_id`.
 ///
 /// Returns `Ok(None)` when no payload is queued. The remove step happens
@@ -338,6 +358,57 @@ fn nanos_now() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0)
+}
+
+/// Minimal ISO-8601 UTC timestamp without pulling in chrono. Format:
+/// `YYYY-MM-DDTHH:MM:SSZ`. Good enough for human reading and
+/// lexicographic sort. Used by every component that timestamps state
+/// (fingerprints, compaction log entries, injection history).
+pub fn now_iso8601() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, m, d, h, mn, s) = unix_to_ymdhms(secs as i64);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, mn, s)
+}
+
+/// Convert UNIX epoch seconds to `(year, month, day, hour, minute, second)`
+/// in UTC. Manual implementation so we don't depend on chrono.
+fn unix_to_ymdhms(mut secs: i64) -> (i32, u32, u32, u32, u32, u32) {
+    let s = (secs.rem_euclid(60)) as u32;
+    secs = secs.div_euclid(60);
+    let mn = (secs.rem_euclid(60)) as u32;
+    secs = secs.div_euclid(60);
+    let h = (secs.rem_euclid(24)) as u32;
+    let mut days = secs.div_euclid(24);
+
+    // Walk forward through years/months — fine at chat-session timescales.
+    let mut y: i32 = 1970;
+    loop {
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let in_year = if leap { 366 } else { 365 };
+        if days < in_year {
+            break;
+        }
+        days -= in_year;
+        y += 1;
+    }
+    let mlen = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let mut m_idx = 0;
+    while m_idx < 12 {
+        let mut len = mlen[m_idx];
+        if m_idx == 1 && leap {
+            len = 29;
+        }
+        if days < len {
+            break;
+        }
+        days -= len;
+        m_idx += 1;
+    }
+    (y, m_idx as u32 + 1, days as u32 + 1, h, mn, s)
 }
 
 /// Replace path-hostile characters in a session id so user input can't
