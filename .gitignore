@@ -1,5 +1,8 @@
 /target
 
+# macOS Finder metadata.
+.DS_Store
+
 # Launch-day content — kept local, not published with the repo.
 docs/blog/launch-post.md
 docs/social/launch_threads.md

@@ -1,5 +1,5 @@
 use std::io::{self, IsTerminal, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -313,7 +313,17 @@ fn main() -> Result<()> {
             format,
         } => {
             let raw = read_input(&file)?;
-            let ctx = build_context(&raw, input_format.to_lib())?;
+            // Auto-detect Claude Code JSONL transcripts: a `.jsonl` extension
+            // OR content where the first non-blank line begins with `{`
+            // (a single JSON object per line, vs. a top-level `[...]` array).
+            // The user can still force a parse with `--input-format`.
+            let ctx = if matches!(input_format, InputFormatArg::Auto)
+                && is_jsonl_transcript(file.as_deref(), &raw)
+            {
+                build_context_from_transcript(&raw)?
+            } else {
+                build_context(&raw, input_format.to_lib())?
+            };
             cmd_analyze(&ctx, &model, format)
         }
         Commands::Optimize {
@@ -569,14 +579,36 @@ fn main() -> Result<()> {
 
 // ── Init command ──────────────────────────────────────────────────────────────
 
+/// Bootstrap a project for cctx.
+///
+/// Performs two independent setup steps:
+///
+/// 1. Creates `.cctx/` (state directory: fingerprints, loss reports,
+///    pending injections, history) with `config.json`. Idempotent — safe
+///    to re-run, will not overwrite existing config.
+/// 2. Writes `.cctx.toml` (CLI defaults). If it already exists, leaves
+///    it alone unless `--force` is passed.
 fn cmd_init(force: bool) -> Result<()> {
+    // ── Step 1: state directory (always, idempotent) ─────────────────────────
+    let project_dir = std::env::current_dir().context("Cannot determine current directory")?;
+    cctx::state::store::init(&project_dir)?;
+    eprintln!(
+        "Initialized {} state directory.",
+        cctx::state::store::state_root(&project_dir).display()
+    );
+
+    // ── Step 2: .cctx.toml (CLI defaults template) ───────────────────────────
     let path = PathBuf::from(".cctx.toml");
     if path.exists() && !force {
-        anyhow::bail!(".cctx.toml already exists in this directory. Pass --force to overwrite.");
+        eprintln!(
+            "Note: {} already exists. Use --force to overwrite.",
+            path.display()
+        );
+    } else {
+        std::fs::write(&path, cctx::config::INIT_TEMPLATE)
+            .with_context(|| format!("Cannot write {}", path.display()))?;
+        eprintln!("Wrote {} — edit to customize defaults.", path.display());
     }
-    std::fs::write(&path, cctx::config::INIT_TEMPLATE)
-        .with_context(|| format!("Cannot write {}", path.display()))?;
-    eprintln!("Wrote {} — edit to customize defaults.", path.display());
     Ok(())
 }
 
@@ -1110,6 +1142,58 @@ fn read_file(path: &PathBuf) -> Result<String> {
             path.display()
         )
     })
+}
+
+/// Heuristic: does this look like a Claude Code JSONL transcript?
+///
+/// Two signals, either is sufficient:
+///
+/// - The file extension is `.jsonl`.
+/// - The first non-blank line of the content starts with `{` rather than
+///   `[`. A top-level `[...]` is OpenAI/Anthropic/RAG chat format; a leading
+///   `{` per line is JSONL.
+///
+/// Plain text input (e.g. piped raw prose) starts with letters and falls
+/// through to `false`.
+fn is_jsonl_transcript(path: Option<&Path>, raw: &str) -> bool {
+    if let Some(p) = path {
+        if p.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+            return true;
+        }
+    }
+    raw.lines()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim_start().starts_with('{'))
+        .unwrap_or(false)
+}
+
+/// Build an [`AppContext`] from a JSONL transcript blob (Claude Code format).
+///
+/// Routes through [`cctx::transcript`] — parser + normalizer — so the
+/// resulting context goes through the same analyze/optimize machinery as
+/// any other input format. The parser is tolerant: malformed lines are
+/// logged and skipped, not fatal.
+fn build_context_from_transcript(raw: &str) -> Result<AppContext> {
+    use cctx::transcript::schema::TranscriptEntry;
+
+    let mut entries: Vec<TranscriptEntry> = Vec::new();
+    for (line_no, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<TranscriptEntry>(trimmed) {
+            Ok(e) => entries.push(e),
+            Err(e) => {
+                eprintln!(
+                    "[cctx] transcript line {}: skipping (parse error: {})",
+                    line_no + 1,
+                    e
+                );
+            }
+        }
+    }
+    cctx::transcript::normalize(entries).context("Failed to normalize transcript")
 }
 
 fn build_context(raw: &str, input_format: Option<InputFormat>) -> Result<AppContext> {
