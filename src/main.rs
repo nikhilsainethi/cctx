@@ -62,6 +62,22 @@ impl InputFormatArg {
     }
 }
 
+/// Subcommands under `cctx model`.
+#[derive(Subcommand)]
+enum ModelCommand {
+    /// Download a model into `~/.cctx/models/`. The only supported
+    /// name today is `gliner` — fetches `model.onnx` + `tokenizer.json`
+    /// from the `onnx-community/gliner_small-v2.1` Hugging Face repo.
+    /// Requires `--features gliner` at build time.
+    Download {
+        /// Model name. Currently must be `gliner`.
+        name: String,
+    },
+    /// List models present under `~/.cctx/models/` and whether they're
+    /// fully downloaded (every required file present).
+    List,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Analyze context health (tokens, dead zones, duplication, score).
@@ -298,6 +314,15 @@ enum Commands {
         /// Overwrite an existing .cctx.toml.
         #[arg(long, default_value_t = false)]
         force: bool,
+    },
+
+    /// Manage downloaded ML models for higher-tier fingerprinting.
+    ///
+    /// Currently the only supported model is `gliner` (~188 MB ONNX +
+    /// tokenizer for Tier-1 zero-shot NER).
+    Model {
+        #[command(subcommand)]
+        command: ModelCommand,
     },
 
     /// Compare two context files side-by-side (before vs after).
@@ -544,6 +569,8 @@ fn main() -> Result<()> {
 
         Commands::Init { force } => cmd_init(force),
 
+        Commands::Model { command } => cmd_model(command),
+
         Commands::Fingerprint {
             file,
             tier,
@@ -624,9 +651,9 @@ fn cmd_fingerprint(
     output: Option<&Path>,
     session_id: Option<&str>,
 ) -> Result<()> {
-    if tier != 0 {
+    if tier > 1 {
         anyhow::bail!(
-            "tier {} not implemented — only Tier 0 (zero-ML, regex+keyword+RAKE) ships today",
+            "tier {} not implemented — supported tiers: 0 (regex+keyword+RAKE), 1 (+GLiNER NER)",
             tier
         );
     }
@@ -646,7 +673,10 @@ fn cmd_fingerprint(
             .to_string()
     });
 
-    let config = cctx::fingerprint::FingerprintConfig::default();
+    let config = cctx::fingerprint::FingerprintConfig {
+        tier: tier as u8,
+        ..cctx::fingerprint::FingerprintConfig::default()
+    };
     let created_at = now_iso8601();
     let fp = cctx::fingerprint::fingerprint(&context, &config, &session_id, &created_at);
 
@@ -776,6 +806,54 @@ fn unix_to_ymdhms(mut secs: i64) -> (i32, u32, u32, u32, u32, u32) {
         m_idx += 1;
     }
     (y, m_idx as u32 + 1, days as u32 + 1, h, mn, s)
+}
+
+// ── Model command ─────────────────────────────────────────────────────────────
+
+fn cmd_model(command: ModelCommand) -> Result<()> {
+    match command {
+        ModelCommand::Download { name } => match name.as_str() {
+            "gliner" => download_gliner(),
+            other => anyhow::bail!("Unknown model `{}`. Supported: gliner", other),
+        },
+        ModelCommand::List => list_models(),
+    }
+}
+
+#[cfg(feature = "gliner")]
+fn download_gliner() -> Result<()> {
+    cctx::fingerprint::gliner::download_model()
+}
+
+#[cfg(not(feature = "gliner"))]
+fn download_gliner() -> Result<()> {
+    anyhow::bail!(
+        "GLiNER support is not compiled in.\n\
+         Rebuild with: cargo install cctx --features gliner"
+    )
+}
+
+#[cfg(feature = "gliner")]
+fn list_models() -> Result<()> {
+    let installed = cctx::fingerprint::gliner::list_installed_models();
+    if installed.is_empty() {
+        eprintln!(
+            "[cctx] No models found under ~/.cctx/models/.\n\
+             Download GLiNER with: cctx model download gliner"
+        );
+        return Ok(());
+    }
+    for (name, path, ok) in installed {
+        let status = if ok { "ready" } else { "incomplete" };
+        println!("  {:<10} {:<10} {}", name, status, path.display());
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "gliner"))]
+fn list_models() -> Result<()> {
+    eprintln!("[cctx] No model loaders compiled in. Build with --features gliner.");
+    Ok(())
 }
 
 // ── Init command ──────────────────────────────────────────────────────────────

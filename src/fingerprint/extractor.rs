@@ -435,6 +435,7 @@ fn make_item(
             textrank_boost: 0.0,
         },
         extraction_method: method.to_string(),
+        confidence: None,
     }
 }
 

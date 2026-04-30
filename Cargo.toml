@@ -77,6 +77,15 @@ tower = { version = "0.5", optional = true }
 # tower-http: ready-made middleware layers (CORS, request tracing, etc.)
 tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
 
+# gline-rs: Rust-native inference engine for GLiNER models (zero-shot NER).
+# Feature-gated behind `gliner` so users who don't want a 188 MB ONNX
+# model + ORT runtime keep a tiny default build.
+gline-rs = { version = "1.0", optional = true }
+
+# orp: ONNX runtime pipeline scaffolding used by gline-rs. We re-export
+# `RuntimeParameters` from it directly so it has to be a sibling dep.
+orp = { version = "0.9", optional = true }
+
 # ── Feature flags ──────────────────────────────────────────────────────────
 #
 # Cargo features let you conditionally compile code and dependencies.
@@ -93,6 +102,10 @@ embeddings = ["dep:reqwest"]
 llm = ["dep:reqwest"]
 # OpenAI-compatible proxy server with context optimization.
 proxy = ["dep:axum", "dep:tokio", "dep:reqwest", "dep:tower", "dep:tower-http"]
+# Tier-1 fingerprint engine (zero-shot NER via GLiNER, ~188 MB model
+# + ONNX Runtime). The `dep:reqwest` is for downloading the model
+# from Hugging Face via `cctx model download gliner`.
+gliner = ["dep:gline-rs", "dep:orp", "dep:reqwest"]
 
 [dev-dependencies]
 assert_cmd = "2"

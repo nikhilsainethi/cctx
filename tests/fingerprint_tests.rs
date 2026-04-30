@@ -174,6 +174,49 @@ fn accuracy_fixture_extracts_port_8443() {
     }
 }
 
+// ── Tier-1 GLiNER (real model, opt-in) ────────────────────────────────────────
+//
+// The test below requires the GLiNER ONNX model to be present at
+// `~/.cctx/models/gliner/`. It's marked `#[ignore]` so the default
+// `cargo test --features gliner` run stays hermetic; opt in with:
+//
+//   cargo test --features gliner -- --ignored gliner_real_extraction
+//
+// On CI machines without the model, this test simply doesn't execute.
+
+#[cfg(feature = "gliner")]
+#[test]
+#[ignore]
+fn gliner_real_extraction_finds_items_tier0_missed() {
+    use cctx::fingerprint::FingerprintConfig;
+
+    let tier0_only_cfg = FingerprintConfig::default();
+    let tier1_cfg = FingerprintConfig {
+        tier: 1,
+        ..FingerprintConfig::default()
+    };
+
+    let entries = parse_transcript(Path::new(SAMPLE_FIXTURE)).expect("fixture parses");
+    let context = normalize(entries).expect("fixture normalizes");
+
+    let tier0 = fingerprint(&context, &tier0_only_cfg, "tier0", "2026-04-30T00:00:00Z");
+    let tier1 = fingerprint(&context, &tier1_cfg, "tier1", "2026-04-30T00:00:00Z");
+
+    // Tier 1 should produce at least as many items, and at least one
+    // should carry `extraction_method = "gliner"`.
+    assert!(
+        tier1.total_items >= tier0.total_items,
+        "Tier 1 ({}) should produce >= Tier 0 ({}) items",
+        tier1.total_items,
+        tier0.total_items
+    );
+    let any_gliner = tier1.items.iter().any(|i| i.extraction_method == "gliner");
+    assert!(
+        any_gliner,
+        "Tier 1 should attribute at least one item to GLiNER"
+    );
+}
+
 #[test]
 fn fingerprint_is_serializable_to_json() {
     let fp = fingerprint_fixture(SAMPLE_FIXTURE);

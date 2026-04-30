@@ -22,10 +22,15 @@
 pub mod dedup;
 pub mod engine;
 pub mod extractor;
+pub mod gliner_iface;
 pub mod scorer;
 pub mod types;
 
+#[cfg(feature = "gliner")]
+pub mod gliner;
+
 pub use engine::fingerprint;
+pub use gliner_iface::{label_to_category, GlinerEngine, GlinerEntity, ENTITY_LABELS};
 pub use types::{
     make_id, Fingerprint, FingerprintConfig, FingerprintItem, ItemCategory, ItemScores,
 };

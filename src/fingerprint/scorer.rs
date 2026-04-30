@@ -91,6 +91,7 @@ mod tests {
                 textrank_boost: 0.0,
             },
             extraction_method: "test".into(),
+            confidence: None,
         }
     }
 

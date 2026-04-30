@@ -54,8 +54,14 @@ pub struct FingerprintItem {
     /// Component scores broken out for transparency in tooling.
     pub scores: ItemScores,
     /// Which extraction layer produced (or last touched) this item.
-    /// One of `"regex"`, `"keyword"`, `"rake"`.
+    /// One of `"regex"`, `"keyword"`, `"rake"`, `"gliner"`.
     pub extraction_method: String,
+    /// GLiNER confidence in `[0.0, 1.0]`. Populated for items extracted
+    /// or boosted by the Tier-1 NER pass; `None` for pure Tier-0 items.
+    /// Omitted from output JSON when `None` to keep Tier-0 fingerprints
+    /// schema-clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
 }
 
 /// Component scores that combine into [`FingerprintItem::priority_score`].
@@ -95,12 +101,17 @@ pub enum ItemCategory {
 
 // ── Engine configuration ──────────────────────────────────────────────────────
 
-/// Tunables for the Tier-0 fingerprint engine.
+/// Tunables for the fingerprint engine.
 ///
 /// Defaults match `.cctx/config.json` written by [`crate::state::store::init`]:
-/// `min_priority_score = 0.1`, `max_items = 200`, `recency_decay_rate = 0.05`.
+/// `min_priority_score = 0.1`, `max_items = 200`, `recency_decay_rate = 0.05`,
+/// `tier = 0`.
 #[derive(Debug, Clone)]
 pub struct FingerprintConfig {
+    /// `0` = Tier-0 only (regex + keyword + RAKE; zero ML deps).
+    /// `1` = Tier-0 + GLiNER zero-shot NER (requires `--features gliner`
+    /// and a downloaded model). Higher tiers reserved for future use.
+    pub tier: u8,
     /// Drop items whose final priority score is below this threshold.
     pub min_priority_score: f64,
     /// Keep only the top `max_items` after sorting by priority.
@@ -110,15 +121,24 @@ pub struct FingerprintConfig {
     /// Layer-3 RAKE phrase ceiling — top-N most-ranked keyphrases are
     /// considered for catch-all extraction.
     pub rake_top_n: usize,
+    /// GLiNER detection threshold — entities below this are dropped.
+    /// Used only at Tier 1+. The brief specifies 0.4 as the default.
+    pub gliner_threshold: f64,
+    /// Multiplier applied to priority when both Tier 0 and GLiNER agree
+    /// on an item with high GLiNER confidence. Used only at Tier 1+.
+    pub gliner_agreement_boost: f64,
 }
 
 impl Default for FingerprintConfig {
     fn default() -> Self {
         Self {
+            tier: 0,
             min_priority_score: 0.1,
             max_items: 200,
             recency_decay_rate: 0.05,
             rake_top_n: 30,
+            gliner_threshold: 0.4,
+            gliner_agreement_boost: 1.5,
         }
     }
 }

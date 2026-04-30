@@ -366,6 +366,7 @@ mod tests {
                 source_positions: vec![5],
                 priority_score: 0.9,
                 extraction_method: "test".into(),
+                confidence: None,
                 scores: ItemScores {
                     uniqueness: 1.0,
                     recency: 0.9,

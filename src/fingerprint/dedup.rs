@@ -126,6 +126,17 @@ fn absorb(items: &mut [FingerprintItem], dst: usize, src: usize) {
     if items[dst].category == ItemCategory::Other && items[src].category != ItemCategory::Other {
         items[dst].category = items[src].category.clone();
     }
+
+    // Cross-tier confidence propagation: if either side has a GLiNER
+    // confidence score, the survivor carries the maximum. This is what
+    // lets `merge_with_agreement_boost` detect "Tier-0 item that
+    // absorbed a Tier-1 entity" → eligible for the agreement boost.
+    let dst_conf = items[dst].confidence.unwrap_or(0.0);
+    let src_conf = items[src].confidence.unwrap_or(0.0);
+    let max_conf = dst_conf.max(src_conf);
+    if max_conf > 0.0 {
+        items[dst].confidence = Some(max_conf);
+    }
 }
 
 /// Stop-words filtered out before Jaccard. Mirrors the list used in
@@ -192,6 +203,7 @@ mod tests {
                 textrank_boost: 0.0,
             },
             extraction_method: method.into(),
+            confidence: None,
         }
     }
 
